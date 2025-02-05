@@ -1,0 +1,17 @@
+# Core dependencies
+torch
+torchaudio
+transformers
+scipy
+numpy
+pydub
+soundfile
+
+# Development dependencies
+pytest
+black
+flake8
+ffmpeg
+demucs
+pretty_midi
+pyfluidsynth
