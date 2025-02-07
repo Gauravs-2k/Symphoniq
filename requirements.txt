@@ -10,6 +10,7 @@ soundfile
 # Development dependencies
 pytest
 black
+librosa
 flake8
 ffmpeg
 demucs
