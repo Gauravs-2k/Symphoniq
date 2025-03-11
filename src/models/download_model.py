@@ -1,18 +1,19 @@
 from transformers import AutoProcessor, MusicgenForConditionalGeneration
-from pathlib import Path
+import os
 
-def download_model(model_name="facebook/musicgen-small"):
-    cache_dir = Path(__file__).parent / "cached_models"
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    
-    print(f"Downloading model {model_name}...")
-    processor = AutoProcessor.from_pretrained(model_name)
-    model = MusicgenForConditionalGeneration.from_pretrained(model_name)
-    
-    print(f"Saving model to {cache_dir}...")
-    processor.save_pretrained(cache_dir)
-    model.save_pretrained(cache_dir)
-    print("Model downloaded and saved successfully!")
+# Set where to save the model
+cache_dir = os.path.join(os.getcwd(), "cached_models")
+os.makedirs(cache_dir, exist_ok=True)
 
-if __name__ == "__main__":
-    download_model()
+print(f"Downloading MusicGen model to {cache_dir}...")
+
+# Download model components
+processor = AutoProcessor.from_pretrained("facebook/musicgen-small")
+model = MusicgenForConditionalGeneration.from_pretrained("facebook/musicgen-small")
+
+# Save to local directory
+processor.save_pretrained(cache_dir)
+model.save_pretrained(cache_dir)
+
+print("Model downloaded successfully!")
+print("You can now run the instrumental_generator.py script")

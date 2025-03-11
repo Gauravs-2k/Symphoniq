@@ -5,7 +5,6 @@ import scipy.io.wavfile
 import numpy as np
 import os
 import pretty_midi
-from ..processors.validate_midi import validate_midi_file
 import sys
 
 
@@ -23,17 +22,15 @@ class InstrumentalGenerator:
         print(f"Loading MusicGen model from local cache: {self.cache_dir}")
         
         try:
-            # Try to load model from local cache only
+            # Try to load model directly from the cache directory instead of using model_name
             self.processor = AutoProcessor.from_pretrained(
-                model_name,
-                cache_dir=self.cache_dir,
-                local_files_only=True  # Only use local files
+                self.cache_dir,  # Load directly from cache path
+                local_files_only=True
             )
             
             self.model = MusicgenForConditionalGeneration.from_pretrained(
-                model_name,
-                cache_dir=self.cache_dir,
-                local_files_only=True  # Only use local files
+                self.cache_dir,  # Load directly from cache path
+                local_files_only=True
             )
             print("Successfully loaded model from local cache")
             
@@ -47,11 +44,13 @@ class InstrumentalGenerator:
             print(f"processor.save_pretrained('{self.cache_dir}')")
             print(f"model.save_pretrained('{self.cache_dir}')")
             raise Exception("Local model not found. Please download it first.")
-        
+    
         # Move to GPU if available
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.model.to(self.device)
         print(f"Model loaded successfully on {self.device}")
+    
+    
     
     def generate_instrumental(self, prompt: str, output_path: Path, duration: int = 30) -> str:
         """
@@ -74,11 +73,11 @@ class InstrumentalGenerator:
             ).to(self.device)
             
             print(f"Generating {duration} seconds of audio...")
-            
+            max_tokens = int(duration * 50)
             # Set optimal parameters for 30-second generation
             audio_values = self.model.generate(
                 **inputs,
-                max_new_tokens=1500,  # 30 seconds * 50 tokens/second
+                max_new_tokens=max_tokens,  # 30 seconds * 50 tokens/second
                 guidance_scale=3.5,   # Increased for better prompt following
                 temperature=0.8,      # Slightly increased for more variation
                 do_sample=True,       # Enable sampling
@@ -101,8 +100,9 @@ class InstrumentalGenerator:
         except Exception as e:
             print(f"Error generating instrumental: {str(e)}")
             return None
-        
-    def generate_from_midi(self, midi_path: Path, output_path: Path, start_time: float = 0, duration: int = 300) -> str:
+    
+    
+    def generate_from_midi(self, midi_path: Path, output_path: Path,instrument="flute", start_time: float = 0, duration: int = 100) -> str:
         """
         Generate instrumental music based on MIDI file
         Args:
@@ -120,27 +120,88 @@ class InstrumentalGenerator:
             # Extract features from the specified time chunk
             tempo = midi_data.get_tempo_changes()[1][0] if midi_data.get_tempo_changes()[1].size > 0 else 120
             
-            # Get instruments for this segment
-            instruments = []
-            for instrument in midi_data.instruments:
-                if not instrument.is_drum:
-                    # Filter notes in the current time window
-                    notes_in_range = [note for note in instrument.notes 
-                                    if note.start >= start_time and note.start < start_time + duration]
-                    if notes_in_range:
-                        instruments.append(pretty_midi.INSTRUMENT_MAP[instrument.program])
+            # Extract melody information
+            notes = []
+            for instr in midi_data.instruments:
+                if not instr.is_drum:
+                    notes.extend(instr.notes)
             
-            if not instruments:
-                instruments = ["piano"]  # Default if no instruments found in chunk
+            # Calculate melody density
+            if notes:
+                # Get start time by finding earliest note start time (or use 0)
+                start_time = min([note.start for note in notes]) if notes else 0
+                notes_per_second = len(notes) / (midi_data.get_end_time() - start_time)
+                density = "complex" if notes_per_second > 4 else "simple"
+            else:
+                density = "simple"
+            techniques = {
+                "flute": "breath control, vibrato, trills, and flutter tonguing",
+                "violin": "vibrato, pizzicato, staccato, and legato bowing",
+                "guitar": "fingerpicking, strumming, hammer-ons, and pull-offs",
+                "piano": "pedaling, arpeggios, glissando, and dynamic control",
+                "saxophone": "vibrato, growling, bending, and subtone",
+                "trumpet": "tonguing, vibrato, glissando, and mutes",
+                "cello": "vibrato, pizzicato, sul ponticello, and col legno",
+                "harp": "glissandos, harmonics, and près de la table"
+            }
+            instrument_descriptions = {
+                "flute": "a wooden flute or Native American flute with warmth and clarity",
+                "violin": "a classical violin with emotional expression and rich tone",
+                "guitar": "an acoustic guitar with clean fingerpicking style",
+                "piano": "a grand piano with delicate touch and expressive dynamics",
+                "saxophone": "a smooth jazz saxophone with soulful expression",
+                "trumpet": "a bright brass trumpet with clear articulation",
+                "cello": "a deep and resonant cello with warm tones",
+                "harp": "a ethereal harp with delicate plucking and resonance"
+            }
             
-            # Create prompt for this chunk
+            instrument_desc = instrument_descriptions.get(
+                instrument.lower(), 
+                f"a beautiful {instrument}"
+            )
+            # Create prompt specifically for flute
             tempo_desc = "fast" if tempo > 100 else "slow"
-            prompt = (f"Generate a {tempo_desc} tempo instrumental piece using "
-                     f"{', '.join(set(instruments))}. "
-                     f"The piece should be {duration} seconds long.")
-            
+            prompt = (
+                f"Generate a high-quality {tempo_desc} tempo {instrument} solo with a {density} melody. "
+                f"The {instrument} should have clear articulation, proper dynamics, and natural phrasing. "
+                f"Include authentic {instrument} techniques like {techniques.get(instrument.lower(), "expressive playing and dynamics")}. "
+                f"The piece should sound like {instrument_desc} with pristine audio quality, "
+                f"recorded in a concert hall with natural reverb. The performance should be "
+                f"expressive with subtle vibrato and dynamic contrast."
+            )
+            print(f"Generating with prompt: {prompt}")
             return self.generate_instrumental(prompt, output_path, duration=duration)
             
         except Exception as e:
             print(f"Error processing MIDI file: {str(e)}")
             return None
+
+
+if __name__ == "__main__":
+    import argparse
+    # Option 1: Use hardcoded parameters - just uncomment these lines to run directly
+    midi_file_path = "/Users/gauravs/Documents/Symphoniq/src/data/input/midi/song_10_vocals.mid"
+    output_file_path = "/Users/gauravs/Documents/Symphoniq/src/data/output/flute_output.wav"
+    
+    try:
+        print("Initializing InstrumentalGenerator...")
+        generator = InstrumentalGenerator()
+        
+        print(f"Generating flute sound from MIDI: {midi_file_path}")
+        # Create output directory if it doesn't exist
+        os.makedirs(os.path.dirname(output_file_path), exist_ok=True)
+        
+        # Generate flute sound from MIDI
+        result = generator.generate_from_midi(
+            midi_path=Path(midi_file_path),
+            output_path=Path(output_file_path),
+            instrument = "violin",
+            duration=10
+        )
+        if result:
+            print(f"Generated audio saved to: {output_file_path}")
+        else:
+            print("Failed to generate audio")
+    except Exception as e:
+        print(f"Error: {str(e)}")
+    
