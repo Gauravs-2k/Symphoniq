@@ -16,7 +16,9 @@ class InstrumentalGenerator:
     def __init__(self, model_name="facebook/musicgen-small"):
         """Initialize MusicGen model using Transformers"""
         # Set up cache directory in the models folder
-        self.cache_dir = Path(__file__).parent / "cached_models"
+        # model_path = Path(__file__).parent / "fine_tuned_model" / "final_model"
+
+        self.cache_dir = Path(__file__).parent / "fine_tuned_model" / "final_model"
         os.makedirs(self.cache_dir, exist_ok=True)
         
         print(f"Loading MusicGen model from local cache: {self.cache_dir}")
@@ -195,7 +197,7 @@ if __name__ == "__main__":
         result = generator.generate_from_midi(
             midi_path=Path(midi_file_path),
             output_path=Path(output_file_path),
-            instrument = "violin",
+            instrument = "flute",
             duration=10
         )
         if result:
