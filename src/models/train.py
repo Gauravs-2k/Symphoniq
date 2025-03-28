@@ -13,6 +13,10 @@ from tqdm.auto import tqdm
 import librosa
 import mido
 import json
+import tempfile
+import boto3
+import shutil
+from botocore.exceptions import ClientError
 from sklearn.model_selection import train_test_split
 
 from transformers import (
@@ -24,6 +28,96 @@ from transformers import (
 # For MIDI processing
 from pretty_midi import PrettyMIDI
 from miditoolkit import MidiFile
+
+# S3 Configuration
+S3_CONFIG = {
+    'bucket': 'iit-symphoniq',
+    'aws_access_key_id': 'AKIAQUFLP4IVKRLIXANY',
+    'aws_secret_access_key': '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',
+    'region_name': 'ap-south-1',
+    'default_prefix': 'uploads/'  # Default prefix for uploads
+}
+
+class S3FileHandler:
+    """Handles S3 file operations and caching"""
+    
+    def __init__(self, config):
+        self.config = config
+        self.bucket = config['bucket']
+        self.s3_client = boto3.client(
+            's3',
+            aws_access_key_id=config['aws_access_key_id'],
+            aws_secret_access_key=config['aws_secret_access_key'],
+            region_name=config['region_name']
+        )
+        # Create temp directory for downloaded files
+        self.temp_dir = Path(tempfile.mkdtemp())
+        self.cache = {}  # Maps S3 keys to local paths
+        
+    def __del__(self):
+        # Clean up temp files when instance is destroyed
+        try:
+            shutil.rmtree(self.temp_dir)
+        except:
+            pass
+    
+    def list_files(self, prefix, extension=None):
+        """List files in S3 bucket with given prefix and optional extension"""
+        try:
+            paginator = self.s3_client.get_paginator('list_objects_v2')
+            page_iterator = paginator.paginate(Bucket=self.bucket, Prefix=prefix)
+            
+            files = []
+            for page in page_iterator:
+                if 'Contents' in page:
+                    for obj in page['Contents']:
+                        key = obj['Key']
+                        if extension is None or key.lower().endswith(extension.lower()):
+                            files.append(key)
+            return files
+        except ClientError as e:
+            print(f"Error listing S3 objects: {e}")
+            return []
+    
+    def download_file(self, s3_key):
+        """Download file from S3 and return local path"""
+        if s3_key in self.cache:
+            return self.cache[s3_key]
+        
+        local_path = self.temp_dir / Path(s3_key).name
+        try:
+            self.s3_client.download_file(self.bucket, s3_key, str(local_path))
+            self.cache[s3_key] = local_path
+            return local_path
+        except ClientError as e:
+            print(f"Error downloading {s3_key}: {e}")
+            return None
+    
+    def upload_file(self, local_path, s3_key):
+        """Upload file to S3 bucket"""
+        try:
+            self.s3_client.upload_file(str(local_path), self.bucket, s3_key)
+            return True
+        except ClientError as e:
+            print(f"Error uploading to {s3_key}: {e}")
+            return False
+    def ensure_local_file(self, path):
+        """Ensures a file is available locally, downloading if needed"""
+        if not isinstance(path, str):
+            return path
+        
+        # If path is already local, return it
+        if os.path.exists(path):
+            return path
+            
+        # Try to download from S3
+        local_path = self.download_file(path)
+        if local_path:
+            print(f"✓ Downloaded {os.path.basename(path)} from S3")
+            return local_path
+        else:
+            print(f"✗ Failed to download {path} from S3")
+            return None
 
 # Dataset class for paired MIDI-audio samples
 class MIDIAudioDataset(torch.utils.data.Dataset):
@@ -39,7 +133,8 @@ class MIDIAudioDataset(torch.utils.data.Dataset):
         max_length_seconds=10,
         midi_representation="text",  # "text", "piano_roll", or "events"
         train_mode=True,
-        test_split=0.1
+        test_split=0.1,
+        s3_handler=None 
     ):
         self.processor = processor
         self.audio_encoder = audio_encoder
@@ -48,14 +143,25 @@ class MIDIAudioDataset(torch.utils.data.Dataset):
         self.max_length = int(target_sr * max_length_seconds)
         self.midi_representation = midi_representation
         self.train_mode = train_mode
+        self.s3_handler = s3_handler
         
-        # Find all MIDI files
-        midi_dir = Path(midi_dir)
-        midi_files = sorted(list(midi_dir.glob("**/*.mid")))
+        # Find all MIDI and audio files
+        if s3_handler:
+            # Using S3 storage
+            midi_files = sorted(s3_handler.list_files(midi_dir, extension=".mid"))
+            audio_files = sorted(s3_handler.list_files(audio_dir, extension=".wav"))
+            
+            print(f"Found {len(midi_files)} MIDI files and {len(audio_files)} audio files in S3")
+        else:
+            # Using local storage
+            midi_dir = Path(midi_dir)
+            midi_files = sorted(list(midi_dir.glob("**/*.mid")))
+            
+            audio_dir = Path(audio_dir)
+            audio_files = sorted(list(audio_dir.glob("**/*.wav")))
+            
+            print(f"Found {len(midi_files)} MIDI files and {len(audio_files)} audio files locally")
         
-        # Find all audio files
-        audio_dir = Path(audio_dir)
-        audio_files = sorted(list(audio_dir.glob("**/*.wav")))
         
         # Create paired examples
         self.examples = []
@@ -63,23 +169,42 @@ class MIDIAudioDataset(torch.utils.data.Dataset):
         print(f"Found {len(midi_files)} MIDI files and {len(audio_files)} audio files")
         
         # Match MIDI and audio files by name
+                # Match MIDI and audio files by name
         midi_dict = {}
         for f in midi_files:
+            # Handle both Path objects and strings (S3 keys)
+            if isinstance(f, str):
+                # For S3 paths
+                filename = os.path.basename(f)
+                stem = os.path.splitext(filename)[0]
+            else:
+                # For Path objects
+                stem = f.stem
+                
             # Try different ways to get a base name
-            base_name = f.stem.split('_')[0]  # Original way
+            base_name = stem.split('_')[0]  # Original way
             midi_dict[base_name] = f
             
             # Also try the full stem as a key
-            midi_dict[f.stem] = f
+            midi_dict[stem] = f
         
         audio_dict = {}
         for f in audio_files:
+            # Handle both Path objects and strings (S3 keys)
+            if isinstance(f, str):
+                # For S3 paths
+                filename = os.path.basename(f)
+                stem = os.path.splitext(filename)[0]
+            else:
+                # For Path objects
+                stem = f.stem
+                
             # Try different ways to get a base name
-            base_name = f.stem.split('_')[0]  # Original way
+            base_name = stem.split('_')[0]  # Original way
             audio_dict[base_name] = f
             
             # Also try the full stem as a key
-            audio_dict[f.stem] = f
+            audio_dict[stem] = f
         
         # Find common keys
         common_keys = set(midi_dict.keys()) & set(audio_dict.keys())
@@ -103,10 +228,20 @@ class MIDIAudioDataset(torch.utils.data.Dataset):
             # Try matching based on substring presence
             additional_pairs = []
             for midi_file in midi_files:
-                midi_name = midi_file.stem.lower()
+                # Get the stem of the file, handling both Path and string
+                if isinstance(midi_file, str):
+                    midi_filename = os.path.basename(midi_file)
+                    midi_name = os.path.splitext(midi_filename)[0].lower()
+                else:
+                    midi_name = midi_file.stem.lower()
                 
                 for audio_file in audio_files:
-                    audio_name = audio_file.stem.lower()
+                    # Get the stem of the file, handling both Path and string
+                    if isinstance(audio_file, str):
+                        audio_filename = os.path.basename(audio_file)  
+                        audio_name = os.path.splitext(audio_filename)[0].lower()
+                    else:
+                        audio_name = audio_file.stem.lower()
                     
                     # Check if one name is a substring of the other 
                     # or they share a common substring of length >= 5
@@ -187,26 +322,29 @@ class MIDIAudioDataset(torch.utils.data.Dataset):
     
     def process_audio(self, audio_path):
         """Load and process audio file"""
+        # Handle S3 paths
+        if self.s3_handler and isinstance(audio_path, str) and not os.path.exists(audio_path):
+            # Download from S3 to local temp path
+            local_path = self.s3_handler.download_file(audio_path)
+            if local_path is None:
+                raise ValueError(f"Could not download audio file: {audio_path}")
+            audio_path = local_path
+        
         audio, sr = librosa.load(audio_path, sr=self.target_sr, mono=True)
-        
-        # Trim silence
-        audio, _ = librosa.effects.trim(audio, top_db=20)
-        
-        # Pad or truncate to fixed length
-        if len(audio) > self.max_length:
-            audio = audio[:self.max_length]
-        elif len(audio) < self.max_length:
-            padding = self.max_length - len(audio)
-            audio = np.pad(audio, (0, padding), mode='constant')
-        
-        # Normalize audio
-        audio = librosa.util.normalize(audio)
-        
+    
         return audio
     
     def process_midi(self, midi_path):
         """Convert MIDI to text representation"""
         try:
+            # Handle S3 paths
+            if self.s3_handler and isinstance(midi_path, str) and not os.path.exists(midi_path):
+                # Download from S3 to local temp path
+                local_path = self.s3_handler.download_file(midi_path)
+                if local_path is None:
+                    raise ValueError(f"Could not download MIDI file: {midi_path}")
+                midi_path = local_path
+                
             if self.midi_representation == "text":
                 # Parse MIDI and convert to text description
                 midi_data = PrettyMIDI(midi_path)
@@ -348,7 +486,10 @@ def knowledge_transfer_train(
     save_every=100,
     eval_every=50,
     max_examples=None,
-    midi_representation="text"
+    midi_representation="text",
+    use_s3=True,  # Changed default to True
+    s3_config=None,
+    project_name=None  # Added project name parameter
 ):
     """
     Train a student MusicGen model using knowledge transfer from a teacher model
@@ -369,10 +510,38 @@ def knowledge_transfer_train(
         eval_every: Evaluate every N steps
         max_examples: Maximum number of examples to use
         midi_representation: How to represent MIDI ("text", "piano_roll", "events")
+        use_s3: Whether to use S3 storage
+        s3_config: S3 configuration dictionary
+        project_name: Name of the project/instrument (e.g., "flute", "violin")
     """
+    # If project name is provided, customize the prompts
+    instrument_name = project_name if project_name else "flute"
+    
     # Create output directory
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
+    
+    s3_handler = None
+    if use_s3 and s3_config:
+        print(f"Initializing S3 handler with bucket: {s3_config['bucket']}")
+        s3_handler = S3FileHandler(s3_config)
+        
+        # When using S3, check if the directories exist, if not create default paths
+        if not s3_handler.list_files(midi_dir):
+            print(f"Warning: MIDI directory {midi_dir} not found or empty in S3")
+            # Try a default location
+            default_midi_dir = f"uploads/{project_name}/midi" if project_name else "uploads/midi"
+            if s3_handler.list_files(default_midi_dir):
+                print(f"Using default MIDI directory: {default_midi_dir}")
+                midi_dir = default_midi_dir
+        
+        if not s3_handler.list_files(audio_dir):
+            print(f"Warning: Audio directory {audio_dir} not found or empty in S3")
+            # Try a default location
+            default_audio_dir = f"uploads/{project_name}/audio" if project_name else "uploads/audio"
+            if s3_handler.list_files(default_audio_dir):
+                print(f"Using default audio directory: {default_audio_dir}")
+                audio_dir = default_audio_dir
     
     # Set device - use GPU if available
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -400,8 +569,121 @@ def knowledge_transfer_train(
         param.requires_grad = False
     teacher_model.eval()
     
-    # Create dataset
+    # Create dataset with modified prompt function that uses the project name
     print(f"Creating dataset from MIDI: {midi_dir} and Audio: {audio_dir}")
+    
+    # Original MIDIAudioDataset instantiations remain, but now the dataset will use the instrument name
+    # via a monkey patch to make process_midi use the correct instrument name
+    original_process_midi = MIDIAudioDataset.process_midi
+    
+    def customized_process_midi(self, midi_path):
+        """Monkey-patched method to use the correct instrument name"""
+        try:
+            if self.midi_representation == "text":
+                # Parse MIDI and convert to text description
+                midi_data = PrettyMIDI(midi_path)
+                
+                # Extract key information from MIDI
+                total_time = int(midi_data.get_end_time())
+                
+                # Get instruments
+                instruments = []
+                for instrument in midi_data.instruments:
+                    if not instrument.is_drum:
+                        inst_name = instrument.name if instrument.name else "Piano"
+                        instruments.append(inst_name)
+                
+                # Count notes per instrument
+                num_notes = 0
+                pitch_range = [128, 0]  # [min, max]
+                
+                for instrument in midi_data.instruments:
+                    if not instrument.is_drum:
+                        num_notes += len(instrument.notes)
+                        for note in instrument.notes:
+                            pitch_range[0] = min(pitch_range[0], note.pitch)
+                            pitch_range[1] = max(pitch_range[1], note.pitch)
+                
+                # Get time signature
+                time_sig = "4/4"  # Default
+                for ts in midi_data.time_signature_changes:
+                    time_sig = f"{ts.numerator}/{ts.denominator}"
+                    break  # Just use the first one
+                
+                # Fix: Get tempo safely using get_tempo_changes() method
+                tempo = 120  # Default
+                try:
+                    _, tempos = midi_data.get_tempo_changes()
+                    if len(tempos) > 0:
+                        tempo = int(tempos[0])
+                except (AttributeError, ValueError):
+                    # Fallback method if get_tempo_changes fails
+                    pass
+                
+                # Create text prompt using the provided instrument name
+                instrument_text = ", ".join(instruments[:3]) if instruments else "Piano"
+                prompt = (
+                    f"Create a {instrument_name} performance based on this MIDI. "
+                    f"The original is for {instrument_text}, with {num_notes} notes "
+                    f"ranging from {librosa.midi_to_note(pitch_range[0])} to "
+                    f"{librosa.midi_to_note(pitch_range[1])}, in {time_sig} at {tempo} BPM, "
+                    f"lasting {total_time} seconds. "
+                    f"The {instrument_name} should play expressively with clear articulation and good breath control."
+                )
+                
+                return prompt
+                            
+            elif self.midi_representation == "piano_roll":
+                # Convert MIDI to piano roll and then to text description
+                midi_data = PrettyMIDI(midi_path)
+                piano_roll = midi_data.get_piano_roll(fs=16)  # 16 frames per second
+                active_notes = np.sum(piano_roll > 0, axis=0)
+                mean_pitch = np.sum(np.arange(128).reshape(-1, 1) * (piano_roll > 0), axis=0)
+                mean_pitch = np.divide(mean_pitch, active_notes, out=np.zeros_like(mean_pitch), where=active_notes > 0)
+                
+                # Create blocks of midi content
+                blocks = []
+                for i in range(0, len(active_notes), 16):
+                    notes_in_block = int(np.sum(active_notes[i:i+16] > 0))
+                    if notes_in_block > 0:
+                        avg_pitch_in_block = int(np.mean(mean_pitch[i:i+16][active_notes[i:i+16] > 0]))
+                        blocks.append(f"{notes_in_block} notes near {librosa.midi_to_note(avg_pitch_in_block)}")
+                
+                blocks_text = ", then ".join(blocks[:10])
+                if len(blocks) > 10:
+                    blocks_text += f", and {len(blocks) - 10} more segments"
+                
+                prompt = (
+                    f"Create a {instrument_name} performance of this musical piece. "
+                    f"The melody structure is: {blocks_text}. "
+                    f"The {instrument_name} should play expressively with clear articulation and good breath control."
+                )
+                
+                return prompt
+                
+            else:
+                # Default simple text representation
+                mid = MidiFile(midi_path)
+                
+                # Extract track and note count information
+                num_tracks = len(mid.instruments)
+                total_notes = sum(len(instr.notes) for instr in mid.instruments)
+                
+                prompt = (
+                    f"Create a {instrument_name} performance based on a MIDI file with {num_tracks} tracks "
+                    f"and {total_notes} notes. The {instrument_name} should play expressively with "
+                    f"clear articulation and good breath control."
+                )
+                
+                return prompt
+                
+        except Exception as e:
+            print(f"Error processing MIDI {midi_path}: {e}")
+            return f"Create a {instrument_name} performance based on a MIDI file. The {instrument_name} should play expressively."
+    
+    # Apply the monkey patch
+    MIDIAudioDataset.process_midi = customized_process_midi
+    
     train_dataset = MIDIAudioDataset(
         midi_dir=midi_dir,
         audio_dir=audio_dir,
@@ -412,7 +694,8 @@ def knowledge_transfer_train(
         target_sr=32000,
         max_length_seconds=10,
         midi_representation=midi_representation,
-        train_mode=True
+        train_mode=True,
+        s3_handler=s3_handler
     )
     
     # Create validation dataset
@@ -426,7 +709,8 @@ def knowledge_transfer_train(
         target_sr=32000,
         max_length_seconds=10,
         midi_representation=midi_representation,
-        train_mode=False
+        train_mode=False,
+        s3_handler=s3_handler
     )
     
     # Create DataLoaders
@@ -651,9 +935,19 @@ def knowledge_transfer_train(
                 
                 # Generate a sample for qualitative evaluation
                 midi_path = val_dataset[0]["midi_path"] if len(val_dataset) > 0 else train_dataset[0]["midi_path"]
-                prompt = train_dataset.process_midi(midi_path)  # Re-process to get text
-                inputs = processor(text=[prompt], padding=True, return_tensors="pt").to(device)
-                
+                # Ensure we're using a local path, not an S3 path
+                if s3_handler and isinstance(midi_path, str) and not os.path.exists(midi_path):
+                    local_midi_path = s3_handler.download_file(midi_path)
+                    if local_midi_path:
+                        midi_path = local_midi_path
+                    else:
+                        print(f"Warning: Could not download {midi_path} for sample generation")
+                        # Use a fallback prompt if download fails
+                        prompt = f"Create a {instrument_name} performance based on a MIDI file."
+                        inputs = processor(text=[prompt], padding=True, return_tensors="pt").to(device)
+                else:
+                    prompt = train_dataset.process_midi(midi_path)  # Now safely handles the file
+                    inputs = processor(text=[prompt], padding=True, return_tensors="pt").to(device)
                 # Generate audio
                 audio_values = student_model.generate(
                     **inputs,
@@ -663,7 +957,7 @@ def knowledge_transfer_train(
                 ).cpu().numpy()
             
                 # Save generated audio
-                audio_path = output_dir / f"sample_{global_step}.wav"
+                audio_path = output_dir / f"{project_name}_sample_{global_step}.wav" if project_name else output_dir / f"sample_{global_step}.wav"
                 try:
                     import scipy.io.wavfile
                     scipy.io.wavfile.write(
@@ -728,37 +1022,128 @@ if __name__ == "__main__":
     musicgen_module.shift_tokens_right = safe_shift_tokens_right
     print("Applied global patch for shift_tokens_right function")
     
-    # Parse arguments
+    # Patch the from_pretrained method to properly handle local files
+    original_processor_from = AutoProcessor.from_pretrained
+    def patched_from_pretrained(pretrained_path, *args, **kwargs):
+        if os.path.exists(pretrained_path):
+            kwargs['local_files_only'] = True 
+            kwargs['trust_remote_code'] = True
+        return original_processor_from(pretrained_path, *args, **kwargs)
+    AutoProcessor.from_pretrained = patched_from_pretrained
+
+    # Also patch MusicgenForConditionalGeneration
+    original_model_from = MusicgenForConditionalGeneration.from_pretrained
+    def patched_model_from_pretrained(pretrained_path, *args, **kwargs):
+        if os.path.exists(pretrained_path):
+            kwargs['local_files_only'] = True
+            kwargs['trust_remote_code'] = True
+        return original_model_from(pretrained_path, *args, **kwargs)
+    MusicgenForConditionalGeneration.from_pretrained = patched_model_from_pretrained
+
+    # Parse arguments - simplified to take just a project name
     import argparse
     
     parser = argparse.ArgumentParser(description="Train MusicGen with knowledge transfer for MIDI-to-instrument conversion")
-    parser.add_argument("--teacher", type=str, default="/Users/gauravs/Documents/Symphoniq/src/models/cached_models", 
+    parser.add_argument("project_name", type=str, help="Name of the instrument/project (e.g., 'flute', 'violin')")
+    parser.add_argument("--teacher", type=str, default="/home/cc/Symphoniq/src/models/cached_models", 
                        help="Path to cached teacher model")
     parser.add_argument("--student", type=str, default="facebook/musicgen-small", help="Student model name")
-    parser.add_argument("--midi_dir", type=str, default="/Users/gauravs/Documents/Symphoniq/src/data/augmented/midi", help="MIDI directory")
-    parser.add_argument("--audio_dir", type=str, default="/Users/gauravs/Documents/Symphoniq/src/data/augmented/audio", help="Audio directory")
-    parser.add_argument("--output_dir", type=str, default="midi_to_flute_model", help="Output directory")
-    parser.add_argument("--batch_size", type=int, default=1, help="Batch size")
     parser.add_argument("--epochs", type=int, default=5, help="Number of epochs")
     parser.add_argument("--lr", type=float, default=1e-5, help="Learning rate")
-    parser.add_argument("--alpha", type=float, default=0.5, help="Weight for knowledge transfer loss")
-    parser.add_argument("--temp", type=float, default=1.0, help="Temperature for knowledge distillation")
-    parser.add_argument("--midi_repr", type=str, default="text", choices=["text", "piano_roll", "events"], 
-                       help="MIDI representation method")
     
     args = parser.parse_args()
+    
+    # Derive S3 directories from project name
+    project_name = args.project_name
+    midi_dir = f"uploads/{project_name}/midi"
+    audio_dir = f"uploads/{project_name}/audio"
+    output_dir = f"{project_name}_model"
+    
+    print(f"Starting training for {project_name}...")
+    print(f"Looking for MIDI files in S3 path: {midi_dir}")
+    print(f"Looking for audio files in S3 path: {audio_dir}")
+    print(f"Model outputs will be saved to: {output_dir}")
     
     # Start training with knowledge transfer
     knowledge_transfer_train(
         teacher_model_path=args.teacher,
         student_model_name=args.student,
-        midi_dir=args.midi_dir,
-        audio_dir=args.audio_dir,
-        output_dir=args.output_dir,
-        batch_size=args.batch_size,
+        midi_dir=midi_dir,
+        audio_dir=audio_dir,
+        output_dir=output_dir,
+        batch_size=1,
         epochs=args.epochs,
         learning_rate=args.lr,
-        alpha=args.alpha,
-        temperature=args.temp,
-        midi_representation=args.midi_repr
+        alpha=0.5,
+        temperature=1.0,
+        midi_representation="text",
+        use_s3=True,
+        s3_config=S3_CONFIG,
+        project_name=project_name
     )
+    
+    # Fix direct S3 access issue - Add this new code
+    import io
+    import soundfile as sf
+    
+    def get_local_path(s3_handler, path):
+        """Ensures a path is available locally, downloading if needed"""
+        if not isinstance(path, str):
+            return str(path)
+            
+        # If already local
+        if os.path.exists(path):
+            return path
+            
+        # If it's an S3 path
+        if '/' in path and not os.path.exists(os.path.dirname(path)):
+            local_path = s3_handler.download_file(path)
+            if local_path:
+                return str(local_path)
+                
+        # Return original if we couldn't handle it
+        return path
+    
+    # Monkey patch MIDIAudioDataset.__getitem__ to properly handle S3 paths
+    original_getitem = MIDIAudioDataset.__getitem__
+    
+    def patched_getitem(self, idx):
+        example = self.examples[idx]
+        if self.s3_handler:
+            # Preemptively try to download the files before processing
+            for key in ['midi_path', 'audio_path']:
+                if key in example and isinstance(example[key], str):
+                    if not os.path.exists(example[key]):
+                        local_path = self.s3_handler.download_file(example[key])
+                        if local_path:
+                            example[key] = str(local_path)
+        
+        # Call original method
+        return original_getitem(self, idx)
+    
+    # Apply the patch
+    MIDIAudioDataset.__getitem__ = patched_getitem
+    
+    # Also patch the process_midi function to better handle S3 paths
+    original_process_midi = MIDIAudioDataset.process_midi
+    
+    def patched_process_midi(self, midi_path):
+        try:
+            # Handle S3 paths more aggressively
+            if self.s3_handler and isinstance(midi_path, str) and not os.path.exists(midi_path):
+                local_path = self.s3_handler.download_file(midi_path)
+                if local_path is not None:
+                    midi_path = str(local_path)
+                else:
+                    print(f"Warning: Could not download MIDI: {midi_path}, using fallback prompt")
+                    return f"Create a performance based on a MIDI file. Play expressively."
+            
+            return original_process_midi(self, midi_path)
+        except Exception as e:
+            print(f"Error in patched process_midi for {midi_path}: {e}")
+            return f"Create a performance based on a MIDI file. Play expressively."
+    
+    # Apply the MIDI processing patch
+    MIDIAudioDataset.process_midi = patched_process_midi
+    
+    # Parse arguments...
