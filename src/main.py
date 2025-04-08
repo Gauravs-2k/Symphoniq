@@ -1,17 +1,20 @@
 from converters.mp3_to_wav import convert_to_wav
 from converters.wav_to_mp3 import convert_to_mp3
 from processors.vocal_seperator import separate_audio
-from processors.midi_converter_new import vocal_to_midi
 from processors.audio_merger import merge_audio
 from models.instrumental_generator import InstrumentalGenerator
+from models.prompt.feature_extraction import extract_features_from_file
+from models.prompt.quantization import quantize_features
+from models.prompt.dict_map import map_features_to_prompt
 import os
 from pathlib import Path
 
-def process_audio(input_mp3_path):
+def process_audio(input_mp3_path, instrument="guitar"):
     """
     Main function to process audio file
     Args:
         input_mp3_path (str): Path to input MP3 file
+        instrument (str): Target instrument for generation
     """
     # Convert relative path to absolute path
     input_mp3_path = os.path.abspath(input_mp3_path)
@@ -41,38 +44,64 @@ def process_audio(input_mp3_path):
     vocals_path = os.path.join(output_dir, f"{base_name}_vocals.wav")
     instrumental_path = os.path.join(output_dir, f"{base_name}_other.wav")
     
-    # Step 3: Convert vocals to MIDI
-    midi_dir = os.path.join(os.path.dirname(wav_output), "midi")
-    os.makedirs(midi_dir, exist_ok=True)
-    midi_output = os.path.join(midi_dir, f"{base_name}_vocals.mid")
-    if not vocal_to_midi(vocals_path, midi_output):
-        print("Error: MIDI conversion failed")
-        return
+    # Step 3: Generate prompt from vocals for MusicGen
+    print("Generating MusicGen prompt from vocals...")
+    try:
+        # Extract audio features
+        features = extract_features_from_file(vocals_path)
+        
+        # Quantize features to token sequences
+        quantized = quantize_features(features)
+        
+        # Generate MusicGen prompt
+        prompts = map_features_to_prompt(quantized, instrument)
+        
+        # Determine which prompt to use (enhanced for 10-sec clips)
+        duration = len(features['audio_data']) / features['sample_rate']
+        prompt_to_use = prompts['enhanced_10sec_prompt'] if duration <= 10 else prompts['musicgen_prompt']
+        
+        # Save prompt to file
+        prompt_file = os.path.join(os.path.dirname(vocals_path), f"{base_name}_prompt.txt")
+        with open(prompt_file, "w") as f:
+            f.write(prompt_to_use)
+            
+        print(f"Generated prompt: '{prompt_to_use}'")
+        print(f"Prompt saved to: {prompt_file}")
+        
+        # Estimate token count
+        token_count = len(prompt_to_use.split()) * 1.3
+        print(f"Token count (estimate): {token_count:.0f}/512")
+        
+    except Exception as e:
+        print(f"Warning: Prompt generation failed: {str(e)}")
+        prompt_to_use = f"{instrument} solo in the style of the vocal melody."
+        print(f"Using fallback prompt: '{prompt_to_use}'")
     
-    # Step 4: Generate flute sound from MIDI using InstrumentalGenerator
-    print("Initializing InstrumentalGenerator...")
+    # Step 4: Generate instrument sound directly from prompt using InstrumentalGenerator
+    print(f"Initializing InstrumentalGenerator for {instrument}...")
     generator = InstrumentalGenerator()
     
     generated_dir = os.path.join(os.path.dirname(wav_output), "generated")
     os.makedirs(generated_dir, exist_ok=True)
-    flute_output = os.path.join(generated_dir, f"{base_name}_flute.wav")
+    instrument_output = os.path.join(generated_dir, f"{base_name}_{instrument}.wav")
     
-    print("Generating flute sound from MIDI...")
-    flute_path = generator.generate_from_midi(
-        midi_path=Path(midi_output),
-        output_path=Path(flute_output),
+    print(f"Generating {instrument} sound with prompt guidance...")
+    # Use generate_instrumental instead of generate_from_midi
+    instrument_path = generator.generate_instrumental(
+        prompt=prompt_to_use,
+        output_path=instrument_output,
         duration=10  # Adjust duration as needed
     )
     
-    if not flute_path:
-        print("Error: Flute sound generation failed")
+    if not instrument_path:
+        print(f"Error: {instrument} sound generation failed")
         return
         
-    # Step 5: Merge generated flute sound with instrumental
+    # Step 5: Merge generated instrument sound with original instrumental
     final_dir = os.path.join(os.path.dirname(wav_output), "final")
     os.makedirs(final_dir, exist_ok=True)
     merged_wav = os.path.join(final_dir, f"{base_name}_final.wav")
-    if not merge_audio(instrumental_path, flute_path, merged_wav):
+    if not merge_audio(instrumental_path, instrument_path, merged_wav):
         print("Error: Audio merging failed")
         return
     
@@ -87,5 +116,9 @@ def process_audio(input_mp3_path):
 
 if __name__ == "__main__":
     # Path to your MP3 file
-    input_file = os.path.join(os.path.dirname(__file__), "data", "input", "song_10.mp3")
-    process_audio(input_file)
+    input_file = os.path.join(os.path.dirname(__file__), "data", "input", "eterna-cancao-wav-12569.mp3")
+    
+    # Specify the target instrument (default: guitar)
+    target_instrument = "guitar"
+    
+    process_audio(input_file, target_instrument)

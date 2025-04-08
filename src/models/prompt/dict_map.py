@@ -52,6 +52,28 @@ class PromptGenerator:
             ("high-pitched", "moderate", 0): "jazz",
             ("high-pitched", "dense", 0): "electronic"
         }
+        
+        # Add MusicGen-specific vocabulary
+        self.musicgen_genres = [
+            "ambient", "folk", "blues", "ballad", "pop", "rock", 
+            "classical", "jazz", "electronic", "cinematic", "orchestral"
+        ]
+        
+        self.musicgen_adjectives = [
+            "melodic", "harmonic", "rhythmic", "emotional", "energetic",
+            "calm", "uplifting", "dynamic", "atmospheric", "expressive"
+        ]
+        
+        self.musicgen_instruments = [
+            "flute", "guitar", "piano", "violin", "cello", "drums",
+            "saxophone", "trumpet", "synthesizer", "voice", "orchestra"
+        ]
+        
+        # Maximum token length for MusicGen prompt
+        self.max_token_length = 512
+        
+        # Approximate token count per word (conservative estimate)
+        self.token_ratio = 1.3
     
     def _get_range_descriptor(self, value: float, range_map: Dict[Tuple[float, float], str]) -> str:
         """Get descriptor for a value based on a range mapping"""
@@ -59,6 +81,11 @@ class PromptGenerator:
             if low <= value < high:
                 return descriptor
         return list(range_map.values())[0]  # Default to first value if not found
+    
+    def _estimate_token_count(self, text: str) -> int:
+        """Estimate the number of tokens in a string based on word count"""
+        words = text.split()
+        return int(len(words) * self.token_ratio) + 1  # +1 for safety margin
     
     def _analyze_pitch_contour(self, pitch_tokens: List[int]) -> Dict[str, Any]:
         """Analyze pitch contour for melody characteristics"""
@@ -210,8 +237,111 @@ class PromptGenerator:
             "consistency": consistency
         }
     
-    def generate_prompt(self, quantized: Dict[str, Any], instrument: str = "flute") -> str:
-        """Generate a MusicGen prompt from quantized features"""
+    def _create_optimized_prompt(self, pitch_analysis, rhythm_analysis, 
+                                timbre_analysis, tempo, style, instrument) -> str:
+        """Create a concise prompt optimized for MusicGen's token limit"""
+        # Core musical attributes - most important information first
+        core_prompt = f"{tempo} {style} {instrument}. "
+        
+        # Add pitch information if we have room
+        pitch_info = f"{pitch_analysis['range']} {pitch_analysis['contour']} melody. "
+        
+        # Add rhythm information if we have room
+        rhythm_info = f"{rhythm_analysis['density']} rhythm. "
+        
+        # Add timbre information if we have room
+        timbre_info = f"{timbre_analysis['primary_descriptor']} tone. "
+        
+        # Standard quality suffix
+        quality = "Clear professional recording."
+        
+        # Combine parts, checking token length
+        prompt = core_prompt
+        
+        if self._estimate_token_count(prompt + pitch_info) < self.max_token_length:
+            prompt += pitch_info
+            
+            if self._estimate_token_count(prompt + rhythm_info) < self.max_token_length:
+                prompt += rhythm_info
+                
+                if self._estimate_token_count(prompt + timbre_info) < self.max_token_length:
+                    prompt += timbre_info
+                    
+                    if self._estimate_token_count(prompt + quality) < self.max_token_length:
+                        prompt += quality
+        
+        return prompt
+    
+    def _create_enhanced_10sec_prompt(self, pitch_analysis, rhythm_analysis, 
+                                     timbre_analysis, tempo, style, instrument) -> str:
+        """Create a highly detailed prompt utilizing more of the available token limit"""
+        # Create a comprehensive, detailed prompt that uses more of the 512 token limit
+        prompt = f"Create a captivating {tempo} {style} composition featuring solo {instrument}. "
+        
+        # Detailed melody section
+        prompt += f"The melody should be primarily {pitch_analysis['range']}, moving in a {pitch_analysis['contour']} direction "
+        if pitch_analysis['pitch_variability'] != "unknown":
+            prompt += f"with {pitch_analysis['pitch_variability']} note choices that create musical interest. "
+        else:
+            prompt += "with expressive phrasing and articulation. "
+        
+        # Add note range details
+        if pitch_analysis['range'] == "low-pitched":
+            prompt += f"Focus on the lower register of the {instrument}, creating a rich foundation. "
+        elif pitch_analysis['range'] == "mid-range":
+            prompt += f"Utilize the middle register of the {instrument} for a balanced, resonant sound. "
+        elif pitch_analysis['range'] == "high-pitched":
+            prompt += f"Explore the upper register of the {instrument}, achieving brightness and projection. "
+        
+        # Detailed rhythm section
+        prompt += f"The rhythm should be {rhythm_analysis['density']} and {rhythm_analysis['pattern']}, "
+        prompt += f"creating a {tempo} pulse that drives the piece forward. "
+        
+        # Add rhythm specifics
+        if rhythm_analysis['accent_pattern'] != "balanced":
+            prompt += f"Incorporate {rhythm_analysis['accent_pattern']} accents to create rhythmic tension and release. "
+        else:
+            prompt += "Maintain a naturally flowing, balanced accent pattern throughout. "
+        
+        # Add style-specific techniques
+        if style == "jazz":
+            prompt += "Include subtle jazz-inspired phrasings with appropriate swing feel. "
+        elif style == "classical":
+            prompt += "Maintain classical articulation and phrasing with careful attention to dynamics. "
+        elif style == "folk":
+            prompt += "Incorporate folk-inspired ornaments and simple, memorable motifs. "
+        elif style == "rock":
+            prompt += "Add occasional rhythmic intensity and drive characteristic of rock music. "
+        
+        # Detailed timbre description
+        prompt += f"The tone should be predominantly {timbre_analysis['primary_descriptor']} and {timbre_analysis['secondary_descriptor']}, "
+        prompt += f"with a {timbre_analysis['consistency']} timbral quality throughout the performance. "
+        
+        # Tone production guidance
+        if instrument == "guitar":
+            prompt += "Play with a mix of fingerpicking and strumming techniques as appropriate. "
+        elif instrument == "piano":
+            prompt += "Utilize sensitive pedaling to blend harmonies while maintaining clarity. "
+        elif instrument == "violin" or instrument == "cello":
+            prompt += "Employ a variety of bowing techniques to achieve expressive phrasing. "
+        elif instrument == "flute" or instrument == "saxophone":
+            prompt += "Use controlled breathing and articulation for a polished sound. "
+        
+        # Performance and expression
+        prompt += f"The performance should convey emotional {style} sensibilities with natural dynamics, "
+        prompt += "starting softer and building in intensity where musically appropriate. "
+        
+        # Production quality
+        prompt += "The recording should have professional studio quality with natural room acoustics, "
+        prompt += "clear definition, balanced frequency response, and subtle reverb that enhances the instrument's resonance. "
+        
+        # Final stylistic instruction
+        prompt += f"Overall, create an engaging {style} piece that showcases the expressive capabilities of the {instrument}."
+        
+        return prompt
+
+    def generate_prompt(self, quantized: Dict[str, Any], instrument: str = "flute") -> Dict[str, str]:
+        """Generate a MusicGen-optimized prompt from quantized features"""
         # Analyze different feature types
         pitch_analysis = self._analyze_pitch_contour(quantized['pitch_tokens'])
         rhythm_analysis = self._analyze_rhythm(quantized['rhythm_tokens'])
@@ -228,7 +358,45 @@ class PromptGenerator:
         )
         style = self.style_map.get(style_key, "melodic")
         
-        # Build prompt with different sections
+        # Ensure instrument is in the known list or default to a generic term
+        if instrument.lower() not in [i.lower() for i in self.musicgen_instruments]:
+            instrument = "solo instrument"
+        
+        # Ensure style is in the known genres or use a fallback
+        if style not in self.musicgen_genres:
+            style = "melodic" if style not in self.musicgen_adjectives else style
+        
+        # Create an optimized prompt that fits within token limit
+        musicgen_prompt = self._create_optimized_prompt(
+            pitch_analysis, rhythm_analysis, timbre_analysis, tempo, style, instrument
+        )
+        
+        # Enhanced prompt specifically designed for 10-second audio clips
+        enhanced_10sec_prompt = self._create_enhanced_10sec_prompt(
+            pitch_analysis, rhythm_analysis, timbre_analysis, tempo, style, instrument
+        )
+        
+        # Legacy compact format (used as fallback)
+        compact_prompt = f"{tempo} {style} {instrument}. {pitch_analysis['range']}. {timbre_analysis['primary_descriptor']}."
+        
+        # Ultra-compact for very short clips
+        minimal_prompt = f"{style} {instrument}."
+        
+        # Create all prompt versions for the return value
+        return {
+            "musicgen_prompt": musicgen_prompt,            # Primary optimized prompt
+            "enhanced_10sec_prompt": enhanced_10sec_prompt, # Detailed prompt for 10-sec clips
+            "compact_prompt": compact_prompt,              # Legacy compact version
+            "minimal_prompt": minimal_prompt,              # Minimal version
+            "detailed_prompt": self._generate_legacy_detail(pitch_analysis, rhythm_analysis, timbre_analysis, tempo, style, instrument),
+            "keyword_prompt": f"{style}. {tempo}. {instrument}.",
+            "legacy_full_prompt": self._generate_legacy_full_prompt(pitch_analysis, rhythm_analysis, timbre_analysis, tempo, style, instrument),
+            "legacy_summary": self._generate_legacy_summary(pitch_analysis, rhythm_analysis, timbre_analysis, tempo, style, instrument)
+        }
+    
+    def _generate_legacy_full_prompt(self, pitch_analysis, rhythm_analysis, 
+                                    timbre_analysis, tempo, style, instrument):
+        """Generate the original detailed prompt format for backward compatibility"""
         intro = f"Create a {instrument} solo with the following characteristics:"
         
         melody_desc = (
@@ -251,20 +419,24 @@ class PromptGenerator:
             f"The sound should be clear and professionally recorded with subtle reverb."
         )
         
-        # Combine all sections into a complete prompt
-        full_prompt = f"{intro}\n\n{melody_desc}\n\n{rhythm_desc}\n\n{timbre_desc}\n\n{style_desc}"
-        
-        # Create a one-line summary for the model
-        summary = (
+        return f"{intro}\n\n{melody_desc}\n\n{rhythm_desc}\n\n{timbre_desc}\n\n{style_desc}"
+    
+    def _generate_legacy_summary(self, pitch_analysis, rhythm_analysis, 
+                               timbre_analysis, tempo, style, instrument):
+        """Generate the original summary prompt for backward compatibility"""
+        return (
             f"Create a {tempo} {style} {instrument} solo with a {pitch_analysis['range']} "
             f"{pitch_analysis['contour']} melody, {rhythm_analysis['density']} rhythm, and "
             f"{timbre_analysis['primary_descriptor']} tone."
         )
-        
-        return {
-            "full_prompt": full_prompt,
-            "summary": summary
-        }
+    
+    def _generate_legacy_detail(self, pitch_analysis, rhythm_analysis, timbre_analysis, tempo, style, instrument):
+        """Generate a compact but detailed prompt"""
+        return (
+            f"Generate a {tempo} {style} {instrument} piece. "
+            f"{pitch_analysis['range']} {pitch_analysis['contour']} melody, "
+            f"{rhythm_analysis['density']} rhythm, {timbre_analysis['primary_descriptor']} tone."
+        )
 
 
 def map_features_to_prompt(quantized_features: Dict[str, Any], instrument: str = "flute") -> Dict[str, str]:

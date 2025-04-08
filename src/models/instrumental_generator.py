@@ -20,7 +20,7 @@ def get_optimal_device():
         return "cpu"
 
 class InstrumentalGenerator:
-    def __init__(self, model_name="facebook/musicgen-small"):
+    def __init__(self, model_name="facebook/musicgen-medium"):
         """Initialize MusicGen model using Transformers"""
         # Apply patches for safe token shifting
         import transformers.models.musicgen.modeling_musicgen as musicgen_module
@@ -41,7 +41,7 @@ class InstrumentalGenerator:
         musicgen_module.shift_tokens_right = safe_shift_tokens_right
         
         # Set up cache directory in the models folder
-        self.cache_dir = Path(__file__).parent / "cached_models"
+        self.cache_dir = Path(__file__).parent / "cached__medium_models"
         os.makedirs(self.cache_dir, exist_ok=True)
         
         # Get the optimal device for current hardware
