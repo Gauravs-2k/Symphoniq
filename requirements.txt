@@ -6,6 +6,7 @@ scipy
 numpy
 pydub
 soundfile
+matplotlib
 
 # Development dependencies
 pytest
