@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link rel="stylesheet" href="style.css">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <title>InstruGen AI</title>
+</head>
+<body class="bg-gray-50">
+  <header class="bg-red-900 text-white py-4 h-30">
+    <div class="max-w-7xl mx-auto px-4">
+      <h1 class="text-2xl font-bold">InstruGen A.I.</h1>
+    </div>
+  </header>
+  <main class="max-w-2xl mx-auto p-6 mt-10">
+    <div class="bg-white rounded shadow p-6">
+      <label class="block mb-2 text-sm font-medium" for="mp3_file">
+        Choose a song (MP3 only)
+      </label>
+      <input
+        type="file"
+        id="mp3_file"
+        name="mp3_file"
+        accept=".mp3"
+        class="block w-full text-sm border border-gray-300 rounded p-2 mb-4"
+      />
+
+      <label class="block mb-2 text-sm font-medium" for="instrument">
+        Select an instrument
+      </label>
+      <select
+        id="instrument"
+        name="instrument"
+        class="block w-full text-sm border border-gray-300 rounded p-2 mb-4"
+      >
+        <option value="flute">Flute</option>
+        <option value="piano">Piano</option>
+        <option value="guitar">Guitar</option>
+      </select>
+
+      <button
+        type="button"
+
+        class="bg-blue-900 text-white text-sm px-4 py-2 rounded hover:bg-blue-700 transition-colors"
+      >
+        Convert
+      </button>
+
+      <div class="mt-6 space-x-2">
+        <button
+          type="button"
+          class="bg-green-600 text-white text-sm px-4 py-2 rounded hover:bg-green-700 transition-colors"
+        >
+          Listen Audio
+        </button>
+        <button
+          type="button"
+          class="bg-gray-600 text-white text-sm px-4 py-2 rounded hover:bg-gray-700 transition-colors"
+        >
+          Download
+        </button>
+      </div>
+    </div>
+  </main>
+  <script src="convert.js"></script>
+</body>
+</html>
