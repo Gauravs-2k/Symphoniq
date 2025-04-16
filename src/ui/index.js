@@ -7,6 +7,10 @@ document.addEventListener('DOMContentLoaded', () => {
   const previewBtn = document.getElementById('previewBtn');
   const downloadBtn = document.getElementById('downloadBtn');
 
+  // Initially disable preview and download buttons
+  previewBtn.disabled = true;
+  downloadBtn.disabled = true;
+
   convertBtn.addEventListener('click', async () => {
     const file = fileInput.files[0];
     if (!file) {
@@ -27,6 +31,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
     convertBtn.disabled = true;
     convertBtn.textContent = 'Converting...';
+    previewBtn.disabled = true;
+    downloadBtn.disabled = true;
 
     const formData = new FormData();
     formData.append('mp3_file', file);
@@ -45,6 +51,10 @@ document.addEventListener('DOMContentLoaded', () => {
       const result = await response.json();
       console.log('Conversion result:', result);
 
+      // Enable the preview and download buttons
+      previewBtn.disabled = false;
+      downloadBtn.disabled = false;
+
       previewBtn.onclick = () => {
         window.open(result.previewUrl, '_blank');
       };
@@ -52,7 +62,7 @@ document.addEventListener('DOMContentLoaded', () => {
       downloadBtn.onclick = () => {
         const a = document.createElement('a');
         a.href = result.downloadUrl;
-        a.download = 'converted_song.mp3';
+        a.download = result.filename || 'converted_song.mp3';
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
