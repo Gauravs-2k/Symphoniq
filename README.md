@@ -1,6 +1,6 @@
-# Symphoniq
+# Symphoniq - InstruGen AI
 
-AI-powered audio processing pipeline for vocal separation and instrumental generation.
+A web application that converts vocals in MP3 files to instrumental tracks using AI.
 
 ## Quick Start
 
@@ -17,8 +17,45 @@ source venv/bin/activate
 
 # Install dependencies
 pip install -r requirements.txt
+```
 
-Project Structure
+## Setup and Installation
+
+1. Install the required dependencies:
+
+```bash
+pip install flask numpy matplotlib
+```
+
+2. Make sure you have all the necessary model dependencies installed.
+
+## Running the Application
+
+1. Navigate to the src directory:
+
+```bash
+cd /Users/gauravs/Documents/Symphoniq/src
+```
+
+2. Run the Flask server:
+
+```bash
+python app.py
+```
+
+3. Open your browser and go to:
+
+```
+http://localhost:5000
+```
+
+4. Use the web interface to:
+   - Upload an MP3 file
+   - Select the target instrument
+   - Click "Convert" to process the audio
+   - After processing, you can listen to or download the generated music
+
+## Project Structure
 
 symphoniq/
 ├── src/
@@ -31,25 +68,34 @@ symphoniq/
 │   ├── processed/     # Intermediate files
 │   └── output/        # Final output files
 
-
 ## Processing Pipeline
-1. Processing Pipeline
-2. Convert MP3 to WAV
-3. Separate vocals from instruments
-4. Convert vocals to MIDI
-5. Generate new instrumental
-6. Merge audio tracks
-7. Convert final WAV to MP3
+
+1. Convert MP3 to WAV
+2. Separate vocals from instruments
+3. Convert vocals to MIDI
+4. Generate new instrumental
+5. Merge audio tracks
+6. Convert final WAV to MP3
 
 ## Usage
+
 1. Place MP3 files in data/input/mp3/
 2. Run 
 
+```bash
 python src/main.py
+```
 
-Core Dependencies
-pydub (audio conversion)
-spleeter (vocal separation)
-pretty_midi (MIDI conversion)
-tensorflow (instrumental generation)
-soundfile (WAV processing)
+## Core Dependencies
+
+- pydub (audio conversion)
+- spleeter (vocal separation)
+- pretty_midi (MIDI conversion)
+- tensorflow (instrumental generation)
+- soundfile (WAV processing)
+
+## System Requirements
+
+- Python 3.8 or higher
+- Modern web browser (Chrome, Firefox, Safari)
+- Sufficient disk space for audio processing
