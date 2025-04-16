@@ -17,3 +17,4 @@ ffmpeg
 demucs
 pretty_midi
 pyfluidsynth
+flask   
