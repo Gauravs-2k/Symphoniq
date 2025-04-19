@@ -3,70 +3,120 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <link rel="stylesheet" href="style.css">
-  <script src="https://cdn.tailwindcss.com"></script>
   <title>InstruGen AI</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    .drag-active {
+      border-color: #B91C1C !important;
+      background-color: #FEF2F2 !important;
+    }
+  </style>
 </head>
 <body class="bg-gray-50">
-  <header class="bg-red-900 text-white py-4 h-30">
-    <div class="max-w-7xl mx-auto px-4">
-      <h1 class="text-2xl font-bold">InstruGen A.I.</h1>
+  <!-- Navbar -->
+  <nav class="bg-white shadow-md">
+    <div class="flex items-center space-x-4 px-4 mx-10">
+      <div class="flex items-center py-4">
+        <img src="logo.jpg" alt="Logo" class="h-8 w-8">
+        <div class="ml-4">
+          <h1 class="text-2xl text-gray-700 font-semibold">InstruGen A.I.</h1>
+          <p class="text-sm text-gray-500">Transform Your Music</p>
+        </div>
+      </div>
+      <div class="flex-grow"></div>
+      <div class="text-right">
+        <span class="text-gray-500">🎵 AI-Powered Music Conversion</span>
+      </div>
     </div>
-  </header>
+  </nav>
+
+  <!-- Main -->
   <main class="max-w-2xl mx-auto p-6 mt-10">
-    <div class="bg-white rounded shadow p-6">
-      <label class="block mb-2 text-sm font-medium" for="mp3_file">
-        Choose a song (MP3 only)
-      </label>
-      <input
-        type="file"
-        id="mp3_file"
-        name="mp3_file"
-        accept=".mp3"
-        class="block w-full text-sm border border-gray-300 rounded p-2 mb-4"
-      />
+    <div class="bg-white rounded-lg shadow-md p-8">
+      <!-- Upload -->
+      <div class="mb-6">
+        <label class="block mb-2 text-sm font-medium text-gray-700">Choose a song (MP3 only)</label>
+        <input type="file" id="mp3_file" accept=".mp3" class="hidden" />
+        <div id="drop-zone" class="border-2 border-dashed border-gray-300 rounded-lg p-12 text-center cursor-pointer hover:border-red-700 transition-colors">
+          <div class="flex flex-col items-center">
+            <div class="w-12 h-12 mb-4 text-red-700">
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path>
+              </svg>
+            </div>
+            <p class="mb-2 text-sm text-gray-600">Click to upload or drag and drop</p>
+            <p class="text-xs text-gray-500">MP3 files only</p>
+          </div>
+        </div>
 
-      <label class="block mb-2 text-sm font-medium" for="instrument">
-        Select an instrument
-      </label>
-      <select
-        id="instrument"
-        name="instrument"
-        class="block w-full text-sm border border-gray-300 rounded p-2 mb-4"
-      >
-        <option value="flute">Flute</option>
-        <option value="piano">Piano</option>
-        <option value="guitar">Guitar</option>
-      </select>
+        <!-- File Preview -->
+        <div id="selected-file" class="hidden mt-4">
+          <div class="relative p-4 bg-red-50 rounded-lg border border-gray-200">
+            <!-- Close button -->
+            <button id="remove-file" class="absolute top-2 right-2 text-gray-500 hover:text-red-700">
+              <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd" />
+              </svg>
+            </button>
 
-      <button
-        type="button"
-        id="convertBtn"
-        class="bg-blue-900 text-white text-sm px-4 py-2 rounded hover:bg-blue-700 transition-colors"
-      >
+            <div class="flex items-center space-x-4">
+              <div class="w-12 h-12 rounded-md bg-red-100 flex items-center justify-center">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 text-red-700" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3" />
+                </svg>
+              </div>
+              <div class="flex-grow">
+                <span id="selected-filename" class="block text-sm font-medium text-gray-700 mb-1"></span>
+                <div class="flex items-center space-x-3">
+                  <button id="play-original" class="text-red-700 hover:text-red-800">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                  </button>
+                  <div class="w-full bg-gray-200 rounded-full h-2.5">
+                    <div class="bg-red-700 h-2.5 rounded-full transition-all" style="width: 0%" id="progress-bar"></div>
+                  </div>
+                  <span class="text-xs text-gray-500 w-24 text-right" id="time-display">0:00 / 0:00</span>
+                </div>
+              </div>
+            </div>
+
+            <audio id="original-audio" class="hidden"></audio>
+          </div>
+        </div>
+      </div>
+
+      <!-- Instrument -->
+      <div class="mb-6">
+        <label class="block mb-2 text-sm font-medium text-gray-700">Select an instrument</label>
+        <select id="instrument" class="block w-full text-sm border border-gray-300 rounded-lg p-3 bg-white focus:ring-red-700 focus:border-red-700">
+          <option value="flute">Flute</option>
+          <option value="piano">Piano</option>
+          <option value="guitar">Guitar</option>
+        </select>
+      </div>
+
+      <!-- Convert Button -->
+      <button id="convertBtn" class="w-full bg-red-700 text-white font-medium py-3 px-4 rounded-lg hover:bg-red-800 transition-colors">
         Convert
       </button>
 
-      <div class="mt-6 space-x-2">
-        <button
-          type="button"
-          id="previewBtn"
-          class="bg-green-600 text-white text-sm px-4 py-2 rounded hover:bg-green-700 transition-colors"
-          disabled
-        >
-          Listen Audio
-        </button>
-        <button
-          type="button"
-          id="downloadBtn"
-          class="bg-gray-600 text-white text-sm px-4 py-2 rounded hover:bg-gray-700 transition-colors"
-          disabled
-        >
-          Download
-        </button>
-      </div>
+      <!-- Converted Audio -->
+<div id="converted-audio-container" class="hidden mt-6">
+  <div class="rounded-xl shadow-sm">
+    <div class="flex items-center mb-4">
+      <h3 class="text-sm font-semibold text-red-700">Converted Audio </h3>
+    </div>
+    <div class="bg-gray-100 p-3 rounded-md shadow-inner border border-gray-100">
+      <audio id="converted-audio" controls class="w-full outline-none" preload="metadata"></audio>
+    </div>
+  </div>
+</div>
+
     </div>
   </main>
+
   <script src="index.js"></script>
 </body>
 </html>
