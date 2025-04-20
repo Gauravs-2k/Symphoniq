@@ -7,7 +7,64 @@ from models.prompt.feature_extraction import extract_features_from_file
 from models.prompt.quantization import quantize_features
 from models.prompt.dict_map import map_features_to_prompt
 import os
+import matplotlib.pyplot as plt
+import librosa
+import librosa.display
+import numpy as np
 from pathlib import Path
+
+def create_audio_comparison_plots(vocals_path, instrument_path, output_dir, base_name):
+    """
+    Create and save comparison plots between vocal and instrumental audio files
+    
+    Args:
+        vocals_path (str): Path to vocals WAV file
+        instrument_path (str): Path to generated instrument WAV file
+        output_dir (str): Directory to save plots
+        base_name (str): Base filename for the plots
+    
+    Returns:
+        str: Path to saved plot image
+    """
+    plt.figure(figsize=(14, 10))
+    
+    # Load audio files
+    vocals, sr_vocals = librosa.load(vocals_path, sr=None)
+    instrument, sr_instrument = librosa.load(instrument_path, sr=None)
+    
+    # Plot waveforms
+    plt.subplot(4, 1, 1)
+    librosa.display.waveshow(vocals, sr=sr_vocals, alpha=0.6)
+    plt.title('Vocals Waveform')
+    plt.ylabel('Amplitude')
+    
+    plt.subplot(4, 1, 2)
+    librosa.display.waveshow(instrument, sr=sr_instrument, alpha=0.6)
+    plt.title('Generated Instrumental Waveform')
+    plt.ylabel('Amplitude')
+    
+    # Plot spectrograms
+    plt.subplot(4, 1, 3)
+    vocals_spec = librosa.amplitude_to_db(np.abs(librosa.stft(vocals)), ref=np.max)
+    librosa.display.specshow(vocals_spec, sr=sr_vocals, x_axis='time', y_axis='log')
+    plt.colorbar(format='%+2.0f dB')
+    plt.title('Vocals Spectrogram')
+    
+    plt.subplot(4, 1, 4)
+    instrument_spec = librosa.amplitude_to_db(np.abs(librosa.stft(instrument)), ref=np.max)
+    librosa.display.specshow(instrument_spec, sr=sr_instrument, x_axis='time', y_axis='log')
+    plt.colorbar(format='%+2.0f dB')
+    plt.title('Generated Instrumental Spectrogram')
+    
+    plt.tight_layout()
+    
+    # Save plot
+    plot_path = os.path.join(output_dir, f"{base_name}_audio_comparison.png")
+    plt.savefig(plot_path, dpi=300)
+    plt.close()
+    
+    print(f"Audio comparison plot saved to: {plot_path}")
+    return plot_path
 
 def process_audio(input_mp3_path, instrument="guitar"):
     """
@@ -96,6 +153,16 @@ def process_audio(input_mp3_path, instrument="guitar"):
     if not instrument_path:
         print(f"Error: {instrument} sound generation failed")
         return
+    
+    # Generate comparison plots between vocals and instrument
+    plots_dir = os.path.join(os.path.dirname(wav_output), "plots")
+    os.makedirs(plots_dir, exist_ok=True)
+    comparison_plot = create_audio_comparison_plots(
+        vocals_path, 
+        instrument_path, 
+        plots_dir, 
+        base_name
+    )
         
     # Step 5: Merge generated instrument sound with original instrumental
     final_dir = os.path.join(os.path.dirname(wav_output), "final")
@@ -112,6 +179,7 @@ def process_audio(input_mp3_path, instrument="guitar"):
         return
         
     print(f"Processing complete! Final files in: {final_dir}")
+    print(f"Audio comparison plot: {comparison_plot}")
     return final_dir
 
 if __name__ == "__main__":
