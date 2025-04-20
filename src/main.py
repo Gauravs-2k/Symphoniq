@@ -116,7 +116,7 @@ def process_audio(input_mp3_path, instrument="guitar"):
 
 if __name__ == "__main__":
     # Path to your MP3 file
-    input_file = os.path.join(os.path.dirname(__file__), "data", "input", "eterna-cancao-wav-12569.mp3")
+    input_file = os.path.join(os.path.dirname(__file__), "data", "input", "song_10.mp3")
     
     # Specify the target instrument (default: guitar)
     target_instrument = "guitar"

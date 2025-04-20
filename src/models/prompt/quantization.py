@@ -1,7 +1,9 @@
 import numpy as np
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 import librosa
 from sklearn.cluster import KMeans
+import matplotlib.pyplot as plt
+import os
 
 
 class FeatureQuantizer:
@@ -91,9 +93,117 @@ class FeatureQuantizer:
         }
         
         return quantized
+    
+    def plot_quantized_histograms(self, quantized: Dict[str, Any], save_path: Optional[str] = None):
+        """
+        Plot histograms of the quantized features.
+        
+        Args:
+            quantized: Dictionary of quantized features from quantize_all
+            save_path: If provided, save the figure to this path
+        """
+        plt.figure(figsize=(15, 12))
+        plt.suptitle('Quantized Vocal Feature Distributions', fontsize=16)
+        
+        # Plot MFCC clusters histogram
+        plt.subplot(2, 2, 1)
+        mfcc_tokens = quantized['mfcc_tokens']
+        plt.hist(mfcc_tokens, bins=self.n_clusters, range=(0, self.n_clusters-1), 
+                 alpha=0.7, color='blue', edgecolor='black')
+        plt.title('MFCC Cluster Distribution')
+        plt.xlabel('Cluster ID')
+        plt.ylabel('Frequency Count')
+        plt.xticks(range(0, self.n_clusters, 2))
+        plt.grid(True, alpha=0.3)
+        
+        # Plot Mel Spectrogram tokens histogram
+        plt.subplot(2, 2, 2)
+        mel_tokens = quantized['mel_tokens']
+        plt.hist(mel_tokens, bins=self.n_levels, range=(0, self.n_levels-1), 
+                 alpha=0.7, color='green', edgecolor='black')
+        plt.title('Mel Spectrogram Token Distribution')
+        plt.xlabel('Quantized Level')
+        plt.ylabel('Frequency Count')
+        plt.grid(True, alpha=0.3)
+        
+        # Plot pitch tokens histogram - filter out -1 values (unvoiced)
+        plt.subplot(2, 2, 3)
+        pitch_tokens = np.array(quantized['pitch_tokens'])
+        voiced_pitches = pitch_tokens[pitch_tokens >= 0]  # Filter out unvoiced (-1)
+        if len(voiced_pitches) > 0:
+            plt.hist(voiced_pitches, bins=min(30, len(np.unique(voiced_pitches))), 
+                     alpha=0.7, color='red', edgecolor='black')
+            plt.title('Pitch Contour Distribution (MIDI notes)')
+            plt.xlabel('MIDI Note Number')
+            plt.ylabel('Frequency Count')
+        else:
+            plt.text(0.5, 0.5, 'No voiced pitches detected', 
+                     horizontalalignment='center', verticalalignment='center')
+            plt.title('Pitch Contour (No Data)')
+        plt.grid(True, alpha=0.3)
+        
+        # Plot rhythm tokens histogram
+        plt.subplot(2, 2, 4)
+        rhythm_tokens = quantized['rhythm_tokens']
+        plt.hist(rhythm_tokens, bins=5, range=(0, 4), 
+                 alpha=0.7, color='purple', edgecolor='black')
+        plt.title('Beat Strength Distribution')
+        plt.xlabel('Quantized Beat Strength')
+        plt.ylabel('Frequency Count')
+        plt.xticks(range(5))
+        plt.grid(True, alpha=0.3)
+        
+        plt.tight_layout(rect=[0, 0, 1, 0.96])  # Adjust layout to accommodate suptitle
+        
+        if save_path:
+            # Create directory if it doesn't exist
+            os.makedirs(os.path.dirname(save_path), exist_ok=True)
+            plt.savefig(save_path)
+            print(f"Quantized feature histogram saved to: {save_path}")
+        
+        plt.show()
 
 
-def quantize_features(features: Dict[str, Any]) -> Dict[str, Any]:
-    """Convenience function to quantize a feature dictionary"""
+def quantize_features(features: Dict[str, Any], plot: bool = True, save_path: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Convenience function to quantize a feature dictionary and optionally plot histograms.
+    
+    Args:
+        features: Dictionary of extracted audio features
+        plot: Whether to plot the quantized feature histograms
+        save_path: Path to save the histogram if plotting
+    
+    Returns:
+        Dictionary of quantized features
+    """
     quantizer = FeatureQuantizer()
-    return quantizer.quantize_all(features)
+    quantized = quantizer.quantize_all(features)
+    
+    # Always create the plot, but only show it if plot=True
+    # This ensures the histogram is always saved
+    print(f"Generating quantization histograms...")
+    
+    # Ensure save_path has a valid directory
+    if save_path:
+        try:
+            # Create directory if it doesn't exist
+            directory = os.path.dirname(save_path)
+            if not directory:  # If dirname returns empty string, use current directory
+                directory = "."
+            
+            os.makedirs(directory, exist_ok=True)
+            print(f"Ensuring directory exists: {directory}")
+            
+            # Generate the plot and save it
+            quantizer.plot_quantized_histograms(quantized, save_path)
+            print(f"Successfully saved quantization histogram to: {save_path}")
+        except Exception as e:
+            print(f"Error saving plot: {e}")
+            # If there's an error saving, still try to generate the plot without saving
+            if plot:
+                quantizer.plot_quantized_histograms(quantized, None)
+    elif plot:
+        # If no save path but plot is true, just display it
+        quantizer.plot_quantized_histograms(quantized, None)
+    
+    return quantized

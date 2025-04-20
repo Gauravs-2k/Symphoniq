@@ -78,9 +78,27 @@ def main(audio_file_path, instrument="flute", visualize=False, save_plot=None):
     print_array_info("Mel Spectrogram", features['mel_spectrogram'])
     print_array_info("MFCCs", features['mfcc'])
     
-    # Now quantize the features
+    # Now quantize the features and display histograms
     print("\nQuantizing features to token sequences...")
-    quantized = quantize_features(features)
+    
+    # Create a specific save directory for analysis files
+    analysis_dir = "/Users/gauravs/Documents/Symphoniq/src/data/input/separated/analysis"
+    os.makedirs(analysis_dir, exist_ok=True)
+    
+    # Create a full path for the quantization histogram in the analysis directory
+    base_name = os.path.splitext(os.path.basename(audio_file_path))[0]
+    quantization_hist_path = os.path.join(analysis_dir, f"{base_name}_quantization_hist.png")
+    
+    print(f"Will save quantization histograms to: {quantization_hist_path}")
+    
+    # Call quantize_features with explicit save_path
+    try:
+        # Always generate the plot, show it only if visualize is True
+        quantized = quantize_features(features, plot=visualize, save_path=quantization_hist_path)
+    except Exception as e:
+        print(f"Error during quantization plotting: {e}")
+        # If plotting fails, try without plotting
+        quantized = quantize_features(features, plot=False)
     
     # Print quantized feature information
     print("\nQuantized Features:")
