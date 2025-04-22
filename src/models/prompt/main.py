@@ -3,6 +3,7 @@ import os
 import argparse
 import numpy as np
 import matplotlib.pyplot as plt
+from pathlib import Path
 
 # Add current directory to the path for local imports
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
@@ -69,7 +70,9 @@ def main(audio_file_path, instrument="flute", visualize=False, save_plot=None):
     # Print basic audio information
     print("\nAudio Information:")
     print(f"  Sample rate: {features['sample_rate']} Hz")
-    print(f"  Duration: {len(features['audio_data']) / features['sample_rate']:.2f} seconds")
+    # Calculate duration here
+    duration = len(features['audio_data']) / features['sample_rate']
+    print(f"  Duration: {duration:.2f} seconds")
     print(f"  Samples: {len(features['audio_data'])}")
     
     # Print information about extracted features
@@ -81,8 +84,9 @@ def main(audio_file_path, instrument="flute", visualize=False, save_plot=None):
     # Now quantize the features and display histograms
     print("\nQuantizing features to token sequences...")
     
-    # Create a specific save directory for analysis files
-    analysis_dir = "/Users/gauravs/Documents/Symphoniq/src/data/input/separated/analysis"
+    # Create a specific save directory for analysis files using a relative path
+    # Go up three levels (prompt -> models -> src -> Symphoniq) then down to data/input/separated/analysis
+    analysis_dir = Path(__file__).parent.parent.parent / "data/input/separated/analysis"
     os.makedirs(analysis_dir, exist_ok=True)
     
     # Create a full path for the quantization histogram in the analysis directory
@@ -114,47 +118,28 @@ def main(audio_file_path, instrument="flute", visualize=False, save_plot=None):
     print(f"  Pitch tokens (first 10): {quantized['pitch_tokens'][:10]}")
     print(f"  Rhythm tokens (all): {quantized['rhythm_tokens']}")
     
-    # Map features to MusicGen prompt
-    print("\nGenerating MusicGen prompts from features...")
-    prompts = map_features_to_prompt(quantized, instrument)
-    
-    print("\nGenerated MusicGen Prompts:")
-    print("\n- MusicGen Optimized Prompt:")
-    print(f"  {prompts['musicgen_prompt']}")
-    print("\n- Enhanced 10-Second Prompt:")
-    print(f"  {prompts['enhanced_10sec_prompt']}")
-    print("\n- Compact Prompt:")
-    print(f"  {prompts['compact_prompt']}")
-    
-    # Determine audio duration in seconds
-    duration = len(features['audio_data']) / features['sample_rate']
+    # Map features to a single MusicGen prompt, passing duration
+    print("\nGenerating single MusicGen prompt from features...")
+    # Pass duration to the mapping function
+    prompt_to_save = map_features_to_prompt(quantized, instrument, duration) 
     
     print(f"\nAudio duration: {duration:.2f} seconds")
     
-    # Force using the enhanced prompt for short audio clips (10 seconds or less)
-    if duration <= 10:
-        prompt_to_save = prompts['enhanced_10sec_prompt']
-        print("\nUsing enhanced detailed prompt for short audio clip...")
-    else:
-        prompt_to_save = prompts['musicgen_prompt']
-        print("\nUsing standard prompt for longer audio clip...")
-    
-    # Save the selected prompt to file
+    # Save the single generated prompt to file
     prompt_file = os.path.splitext(audio_file_path)[0] + "_prompt.txt"
     with open(prompt_file, "w") as f:
         f.write(prompt_to_save)
     
-    # Estimate token count
-    token_count = len(prompt_to_save.split()) * 1.3
-    print(f"\nSaved MusicGen prompt to: {prompt_file}")
+    # Estimate token count for the single prompt
+    token_count = len(prompt_to_save.split()) * 1.3 
+    print(f"\nSaved final MusicGen prompt to: {prompt_file}")
     print(f"  Prompt: \"{prompt_to_save}\"")
-    print(f"  Token count (estimate): {token_count:.0f}/512")
+    print(f"  Estimated token count: ~{token_count:.0f} (target < 512)") 
     
-    # Verify we're using enough tokens
-    if token_count < 100 and duration <= 10:
-        print("  Warning: Prompt token count is very low. The enhanced_10sec_prompt may not be working correctly.")
-    elif token_count > 450:
-        print("  Warning: Prompt is approaching token limit. Consider using a more compact format.")
+    # Adjust warnings for token count (applied to the single prompt)
+    if duration <= 10 and token_count < 200: 
+        print(f"  Warning: Token count ({token_count:.0f}) is low for a short clip.")
+        print("           Consider enhancing the prompt generation logic in dict_map.py for more detail.")
     
     # Visualize if requested
     if visualize:
@@ -168,10 +153,11 @@ def main(audio_file_path, instrument="flute", visualize=False, save_plot=None):
         plot_quantized_features(quantized, save_path=quantized_plot)
     
     print("\nFeature extraction and prompt generation completed successfully!")
+    # Update return dictionary to only include the single prompt
     return {
         "features": features, 
         "quantized": quantized,
-        "prompts": prompts
+        "prompt": prompt_to_save # Changed from "prompts" dictionary
     }
 
 if __name__ == "__main__":
@@ -188,3 +174,4 @@ if __name__ == "__main__":
     
     # Call main() to extract features and exit
     results = main(args.audio_file, args.instrument, args.visualize, args.save)
+    # Example of accessing the prompt: print(results['prompt'])
