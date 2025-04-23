@@ -192,7 +192,7 @@ def process_audio(input_mp3_path, instrument="guitar"):
     
     # Then merge with original instrumental
     final_wav = os.path.join(final_dir, f"{base_name}_final.wav")
-    if not merge_audio(vocals_path, merged_chunks, final_wav):
+    if not merge_audio(instrumental_path, merged_chunks, final_wav):
         print("Error: Final audio merging failed")
         return
     
