@@ -42,7 +42,7 @@ def convert_audio():
         return jsonify({'error': 'Only MP3 files are allowed'}), 400
     
     # Get the instrument parameter
-    instrument = request.form.get('instrument', 'guitar')
+    instrument = request.form.get('instrument')
     
     # Save the uploaded file
     filename = secure_filename(file.filename)

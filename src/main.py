@@ -6,6 +6,7 @@ from models.instrumental_generator import InstrumentalGenerator
 from models.prompt.feature_extraction import extract_features_from_file
 from models.prompt.quantization import quantize_features
 from models.prompt.dict_map import map_features_to_prompt
+from processors.audio_chunk_dechunk import split_audio_into_chunks, merge_audio_from_paths
 import os
 import matplotlib.pyplot as plt
 import librosa
@@ -100,86 +101,108 @@ def process_audio(input_mp3_path, instrument="guitar"):
     base_name = os.path.splitext(os.path.basename(wav_output))[0]
     vocals_path = os.path.join(output_dir, f"{base_name}_vocals.wav")
     instrumental_path = os.path.join(output_dir, f"{base_name}_other.wav")
-    
-    # Step 3: Generate prompt from vocals for MusicGen
-    print("Generating MusicGen prompt from vocals...")
-    try:
-        # Extract audio features
-        features = extract_features_from_file(vocals_path)
-        
-        # Quantize features to token sequences
-        quantized = quantize_features(features)
-        
-        # Generate MusicGen prompt
-        prompts = map_features_to_prompt(quantized, instrument)
-        
-        # Determine which prompt to use (enhanced for 10-sec clips)
-        duration = len(features['audio_data']) / features['sample_rate']
-        prompt_to_use = prompts['enhanced_10sec_prompt'] if duration <= 10 else prompts['musicgen_prompt']
-        
-        # Save prompt to file
-        prompt_file = os.path.join(os.path.dirname(vocals_path), f"{base_name}_prompt.txt")
-        with open(prompt_file, "w") as f:
-            f.write(prompt_to_use)
-            
-        print(f"Generated prompt: '{prompt_to_use}'")
-        print(f"Prompt saved to: {prompt_file}")
-        
-        # Estimate token count
-        token_count = len(prompt_to_use.split()) * 1.3
-        print(f"Token count (estimate): {token_count:.0f}/512")
-        
-    except Exception as e:
-        print(f"Warning: Prompt generation failed: {str(e)}")
-        prompt_to_use = f"{instrument} solo in the style of the vocal melody."
-        print(f"Using fallback prompt: '{prompt_to_use}'")
-    
-    # Step 4: Generate instrument sound directly from prompt using InstrumentalGenerator
-    print(f"Initializing InstrumentalGenerator for {instrument}...")
-    generator = InstrumentalGenerator()
-    
-    generated_dir = os.path.join(os.path.dirname(wav_output), "generated")
-    os.makedirs(generated_dir, exist_ok=True)
-    instrument_output = os.path.join(generated_dir, f"{base_name}_{instrument}.wav")
-    
-    print(f"Generating {instrument} sound with prompt guidance...")
-    # Use generate_instrumental instead of generate_from_midi
-    instrument_path = generator.generate_instrumental(
-        prompt=prompt_to_use,
-        output_path=instrument_output,
-        duration=10  # Adjust duration as needed
-    )
-    
-    if not instrument_path:
-        print(f"Error: {instrument} sound generation failed")
+
+    # Step 3:  Convert the separated files into 10 seconds chunks
+    success, result = split_audio_into_chunks(vocals_path, 10)
+    if not success:
+        print(f"Error: {result}")
         return
     
-    # Generate comparison plots between vocals and instrument
-    plots_dir = os.path.join(os.path.dirname(wav_output), "plots")
-    os.makedirs(plots_dir, exist_ok=True)
-    comparison_plot = create_audio_comparison_plots(
-        vocals_path, 
-        instrument_path, 
-        plots_dir, 
-        base_name
-    )
+    generated_chunks = []
+    for i in range(1, result + 1):
+        chunk_file = os.path.join(os.path.dirname(vocals_path), f"output_chunks/chunk_{i}.wav")
+        print(f"Reading chunk {i}: {chunk_file}")
+
+        # Step 4: Generate prompt from vocals for MusicGen
+        print("Generating MusicGen prompt from vocals...")
+        try:
+            # Extract audio feature
+
+            features = extract_features_from_file(chunk_file)
+            
+            # Quantize features to token sequences
+            quantized = quantize_features(features)
+            
+            # Generate MusicGen prompt
+            prompt_to_use = map_features_to_prompt(quantized, instrument)
+            
+            # Save prompt to file
+            prompt_file = os.path.join(os.path.dirname(vocals_path), f"{base_name}_chunk_{i}_prompt.txt")
+            with open(prompt_file, "w") as f:
+                f.write(prompt_to_use)
+                
+            print(f"Generated prompt: '{prompt_to_use}'")
+            print(f"Prompt saved to: {prompt_file}")
+            
+            # Estimate token count
+            token_count = len(prompt_to_use.split()) * 1.3
+            print(f"Token count (estimate): {token_count:.0f}/512")
+            
+        except Exception as e:
+            print(f"Warning: Prompt generation failed: {str(e)}")
+            prompt_to_use = f"{instrument} solo in the style of the vocal melody."
+            print(f"Using fallback prompt: '{prompt_to_use}'")
+            
+        # Step 5: Generate instrument sound directly from prompt using InstrumentalGenerator
+        print(f"Initializing InstrumentalGenerator for {instrument}...")
+        generator = InstrumentalGenerator()
         
-    # Step 5: Merge generated instrument sound with original instrumental
+        generated_dir = os.path.join(os.path.dirname(wav_output), "generated")
+        os.makedirs(generated_dir, exist_ok=True)
+        instrument_output = os.path.join(generated_dir, f"{base_name}_{instrument}_chunk_{i}.wav")
+        
+        print(f"Generating {instrument} sound with prompt guidance...")
+        # Use generate_instrumental instead of generate_from_midi
+        instrument_path = generator.generate_instrumental(
+            prompt=prompt_to_use,
+            output_path=instrument_output,
+            duration=10  # Adjust duration as needed
+        )
+        
+        if not instrument_path:
+            print(f"Error: {instrument} sound generation failed")
+            return
+            
+        # Store the generated chunk path
+        generated_chunks.append(instrument_path)
+        
+        # Generate comparison plots between vocals and instrument
+        plots_dir = os.path.join(os.path.dirname(wav_output), "plots")
+        os.makedirs(plots_dir, exist_ok=True)
+        comparison_plot = create_audio_comparison_plots(
+            chunk_file, 
+            instrument_path, 
+            plots_dir, 
+            f"{base_name}_chunk_{i}"
+        )
+        
+        print(f"Processing complete for chunk {i}! Comparison plot: {comparison_plot}")
+        print(f"Generated chunks: {generated_chunks}")
+
+    # Step 6: Merge all generated instrument sounds with original instrumental
     final_dir = os.path.join(os.path.dirname(wav_output), "final")
     os.makedirs(final_dir, exist_ok=True)
-    merged_wav = os.path.join(final_dir, f"{base_name}_final.wav")
-    if not merge_audio(instrumental_path, instrument_path, merged_wav):
-        print("Error: Audio merging failed")
+    
+    print("MERGING CHUNKS", generated_chunks)
+    # First merge all generated chunks
+    merged_chunks = os.path.join(final_dir, f"{base_name}_{instrument}_all_chunks.wav")
+    if not merge_audio_from_paths(generated_chunks, merged_chunks):
+        print("Error: Merging generated chunks failed")
+        return
+    
+    # Then merge with original instrumental
+    final_wav = os.path.join(final_dir, f"{base_name}_final.wav")
+    if not merge_audio(vocals_path, merged_chunks, final_wav):
+        print("Error: Final audio merging failed")
         return
     
     # Optional: Convert final WAV to MP3
     final_mp3 = os.path.join(final_dir, f"{base_name}_final.mp3")
-    if not convert_to_mp3(merged_wav, final_mp3):
+    if not convert_to_mp3(final_wav, final_mp3):
         print("Error: MP3 conversion failed")
         return
         
     print(f"Processing complete! Final files in: {final_dir}")
-    print(f"Audio comparison plot: {comparison_plot}")
     return final_dir
 
 if __name__ == "__main__":
@@ -187,6 +210,6 @@ if __name__ == "__main__":
     input_file = os.path.join(os.path.dirname(__file__), "data", "input", "song_10.mp3")
     
     # Specify the target instrument (default: guitar)
-    target_instrument = "guitar"
+    target_instrument = "piano"
     
     process_audio(input_file, target_instrument)

@@ -187,7 +187,7 @@ class InstrumentalGenerator:
                 **inputs,
                 max_new_tokens=max_tokens,
                 guidance_scale=guidance_scale,
-                temperature=0.7,
+                temperature=0.8,
             )
         
         # Convert to numpy and scale
