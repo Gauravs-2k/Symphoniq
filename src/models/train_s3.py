@@ -1,9 +1,5 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
-Direct S3 streaming training (no downloads) for MusicGen with advanced regularization
-"""
-
 import os
 import torch
 import numpy as np
@@ -75,9 +71,13 @@ def list_s3_files(prefix, extension=None):
         print(f"Error listing S3 objects: {e}")
         return []
 
-# Custom Regularization Methods
 class SpectralNormalization:
-    """Applies spectral normalization to model weights"""
+    """
+    Weight Normalization Technique
+    - Purpose: Stabilize training by constraining weight matrices
+    - Method: Normalize weights by their spectral norm
+    - Effect: Prevents sudden changes in model behavior
+    """
     @staticmethod
     def apply(model, name='weight', n_power_iterations=1):
         for module in model.modules():
@@ -102,7 +102,12 @@ class SpectralNormalization:
                             module.weight.data = weight / sigma
 
 class FocalLoss(torch.nn.Module):
-    """Focal Loss for handling class imbalance better than standard cross-entropy"""
+    """
+    Advanced Loss Function
+    - Purpose: Better handle imbalanced data
+    - Method: Down-weight easy examples, focus on hard ones
+    - Effect: More robust training on diverse audio patterns
+    """
     def __init__(self, gamma=2.0, alpha=None, reduction='mean'):
         super(FocalLoss, self).__init__()
         self.gamma = gamma
@@ -126,7 +131,12 @@ class FocalLoss(torch.nn.Module):
             return focal_loss
 
 def mixup_data(x, y, alpha=0.2):
-    """Applies mixup augmentation to batch data"""
+    """
+    Data Augmentation Technique
+    - Purpose: Create new training examples
+    - Method: Linear interpolation of inputs and labels
+    - Effect: Smoother decision boundaries, better generalization
+    """
     if alpha > 0:
         lam = np.random.beta(alpha, alpha)
     else:
@@ -234,6 +244,21 @@ def stream_audio_from_s3(s3_key, target_sr=32000, apply_augmentation=False):
         return np.zeros(target_sr * 3, dtype=np.float32)  # 3 seconds of silence in float32
 
 class DirectStreamingDataset(torch.utils.data.Dataset):
+    """
+    Real-time Data Processing Pipeline
+    
+    Flow:
+    1. List MIDI and Audio files from S3
+    2. Match pairs using filename matching
+    3. Stream files on-demand during training
+    4. Apply real-time augmentation
+    5. Convert to model-ready format
+    
+    Benefits:
+    - No local storage needed
+    - Dynamic data loading
+    - Real-time processing
+    """
     def __init__(
         self,
         midi_dir,
@@ -501,7 +526,7 @@ def custom_collate_fn(batch):
 
 
 def direct_stream_train(
-    teacher_model_path="/home/cc/Symphoniq/src/models/cached_models",
+    teacher_model_path="/home/cc/Symphoniq/src/models/cached__medium_models",
     student_model_name="facebook/musicgen-small",
     midi_dir="uploads/flute/midi",
     audio_dir="uploads/flute/audio",
@@ -522,7 +547,30 @@ def direct_stream_train(
     use_spectral_norm=True,  # Whether to apply spectral normalization
     mixup_alpha=0.2  # Mixup parameter
 ):
-    """Training with direct S3 streaming - no file downloads at all, with advanced regularization"""
+    """
+    Main Training Loop with Knowledge Distillation
+    
+    Algorithm Flow:
+    1. Setup Models:
+       - Load teacher (frozen) and student (trainable) models
+       - Configure optimizers and loss functions
+    
+    2. Training Loop:
+       a) Stream batch from S3
+       b) Forward pass through student
+       c) Get teacher's knowledge (hidden states)
+       d) Compute combined loss:
+          - Task Loss: How well student generates audio
+          - Distillation Loss: How well student matches teacher
+       e) Update student model
+       f) Evaluate and save checkpoints
+    
+    Advanced Features:
+    - Spectral Normalization: Stabilize training
+    - Focal Loss: Handle class imbalance
+    - Mixup Augmentation: Improve generalization
+    - Gradient Accumulation: Handle larger effective batch sizes
+    """
     # Set instrument name
     instrument_name = project_name
     
@@ -723,10 +771,9 @@ def direct_stream_train(
             if not labels.dtype == torch.long:
                 labels = labels.long()
             
-            # Reshape labels for MusicGen's codebook expectation (4 codebooks)
-            print(f"Original labels shape: {labels.shape}")
+            # Reshape the data so MusicGen understands it better
             if len(labels.shape) == 2:
-                # If 2D: [batch_size, seq_len]
+                # If flat, reshape for 4 codebooks (MusicGen likes this format)
                 batch_size, seq_len = labels.shape
                 labels = labels.reshape(batch_size, 1, seq_len).repeat(1, 4, 1)
             elif len(labels.shape) == 3:
@@ -744,16 +791,13 @@ def direct_stream_train(
             else:
                 # Handle other unexpected shapes
                 raise ValueError(f"Unexpected labels shape: {labels.shape}. Expected 2D, 3D, or 4D tensor.")
-            print(f"Reshaped labels shape: {labels.shape}, dtype: {labels.dtype}")
             
-            # Apply mixup augmentation with probability 0.3
+            # Sometimes mix things up to help learning
             apply_mixup = random.random() < 0.3 and mixup_alpha > 0
             if apply_mixup:
+                # Blend different examples together
                 mixed_labels, labels_a, labels_b, lam = mixup_data(labels, labels, mixup_alpha)
-                # Ensure mixed labels are also Long type
-                if not mixed_labels.dtype == torch.long:
-                    mixed_labels = mixed_labels.long()
-                labels = mixed_labels
+                labels = mixed_labels.long()  # Keep it in the right format
             
             # Forward pass - student
             student_outputs = student_model(
@@ -776,37 +820,34 @@ def direct_stream_train(
             else:
                 student_loss = student_outputs.loss
             
-            # Forward pass - teacher (for knowledge transfer)
+            # Knowledge transfer: Extract what the teacher model knows
             with torch.no_grad():
-                # Call just the text encoder part of the teacher model
+                # Let teacher analyze the text input
                 teacher_text_outputs = teacher_model.text_encoder(
                     input_ids=input_ids,
                     attention_mask=attention_mask,
                     output_hidden_states=True
                 )
-                
-                # Get the text encoder hidden states
+                # Grab teacher's understanding of the text
                 teacher_hidden = teacher_text_outputs.hidden_states[-1]
             
-            # Knowledge transfer loss - align hidden states
+            # Get student's understanding for comparison
             student_text_outputs = student_outputs.encoder_hidden_states
             student_hidden = student_text_outputs[-1]
             
-            # Make sure the dimensions match between teacher and student
+            # Make sure student and teacher are speaking the same language
             if student_hidden.shape != teacher_hidden.shape:
-                # Simple adaption if shapes don't match exactly
-                if student_hidden.shape[-1] != teacher_hidden.shape[-1]:
-                    # Create a simple projection
-                    hidden_size = teacher_hidden.shape[-1]
-                    student_hidden = torch.nn.functional.linear(
-                        student_hidden, 
-                        torch.randn(hidden_size, student_hidden.shape[-1], device=device)
-                    )
+                # Quick fix: project student's output to match teacher's dimension
+                hidden_size = teacher_hidden.shape[-1]
+                student_hidden = torch.nn.functional.linear(
+                    student_hidden, 
+                    torch.randn(hidden_size, student_hidden.shape[-1], device=device)
+                )
             
-            # MSE loss between hidden states
+            # How well does student match teacher's understanding?
             distill_loss = torch.nn.functional.mse_loss(student_hidden, teacher_hidden)
             
-            # Combined loss
+            # Combined loss: balance between task performance and matching teacher
             loss = (1 - alpha) * student_loss + alpha * distill_loss
             
             # Scale for gradient accumulation if needed
@@ -881,7 +922,19 @@ def direct_stream_train(
     return final_model_path
 
 def evaluate_model(model, dataloader, device, use_focal_loss=False, focal_loss_fn=None):
-    """Helper function to evaluate the model on validation data"""
+    """
+    Validation Process
+    
+    Purpose:
+    1. Monitor training progress
+    2. Detect overfitting
+    3. Save best model checkpoints
+    
+    Method:
+    - Run model on validation set
+    - Compute loss metrics
+    - Track best performance
+    """
     model.eval()
     val_losses = []
     
@@ -941,11 +994,23 @@ def validate_audio_files(audio_dir):
             print(f"WARNING: {audio_file} has unusual frequency profile for flute!")
 
 if __name__ == "__main__":
+    """
+    Command Line Interface
+    
+    Usage Example:
+    python train_s3.py flute --teacher path/to/teacher --epochs 15
+    
+    Flow:
+    1. Parse command line arguments
+    2. Set up training configuration
+    3. Initialize S3 streaming
+    4. Start training pipeline
+    """
     import argparse
     
     parser = argparse.ArgumentParser(description="Train MusicGen with direct S3 streaming (no downloads)")
     parser.add_argument("project_name", type=str, help="Name of the instrument/project (e.g., 'flute', 'violin')")
-    parser.add_argument("--teacher", type=str, default="/home/cc/Symphoniq/src/models/cached_models", 
+    parser.add_argument("--teacher", type=str, default="/home/cc/Symphoniq/src/models/cached__medium_models", 
                        help="Path to cached teacher model")
     parser.add_argument("--student", type=str, default="facebook/musicgen-small", help="Student model name")
     parser.add_argument("--epochs", type=int, default=15, help="Number of epochs")

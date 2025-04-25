@@ -7,14 +7,18 @@ import os
 
 
 class FeatureQuantizer:
-    """Quantizes audio features into simplified token sequences"""
+    """Quantizes continuous audio features into discrete tokens for sequence modeling"""
     
     def __init__(self, n_clusters=16, n_levels=32):
         self.n_clusters = n_clusters  # For MFCC clustering
         self.n_levels = n_levels      # For mel spectrogram quantization
     
     def quantize_mfcc(self, mfcc: np.ndarray) -> np.ndarray:
-        """Convert MFCCs to cluster IDs using k-means"""
+        """
+        Groups similar vocal timbres together using k-means clustering.
+        Each MFCC frame gets assigned to one of n_clusters timbral categories.
+        This effectively tokenizes the continuously varying voice character.
+        """
         # Transpose to get time frames as samples
         mfcc_frames = mfcc.T
         
@@ -25,7 +29,14 @@ class FeatureQuantizer:
         return cluster_ids
     
     def quantize_mel_spectrogram(self, mel_spec: np.ndarray) -> np.ndarray:
-        """Quantize mel spectrogram values to discrete levels"""
+        """
+        Converts continuous spectral energy measurements into discrete intensity levels.
+        Steps:
+        1. Normalize the energy to 0-1 range for consistent scaling
+        2. Divide into n_levels discrete steps
+        3. Summarize each time frame by its most common energy level
+        This creates a simplified representation of the spectral shape over time.
+        """
         # Normalize to [0,1] range
         mel_norm = (mel_spec - mel_spec.min()) / (mel_spec.max() - mel_spec.min() + 1e-9)
         
@@ -42,7 +53,13 @@ class FeatureQuantizer:
         return frame_tokens
     
     def extract_pitch_contour(self, audio: np.ndarray, sr: int) -> List[int]:
-        """Extract and quantize the main pitch contour"""
+        """
+        Extracts the main melody line as a sequence of discrete pitch values:
+        1. Uses PYIN for robust pitch detection in vocals
+        2. Converts frequencies to MIDI note numbers for even pitch spacing
+        3. Marks unvoiced segments as -1 (when no clear pitch is detected)
+        4. Downsamples to reduce redundancy in the pitch sequence
+        """
         # Extract pitch using PYIN algorithm
         f0, voiced_flag, _ = librosa.pyin(
             audio, 

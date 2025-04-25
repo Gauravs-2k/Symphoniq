@@ -156,7 +156,7 @@ def process_audio(input_mp3_path, instrument="guitar"):
         instrument_path = generator.generate_instrumental(
             prompt=prompt_to_use,
             output_path=instrument_output,
-            duration=10  # Adjust duration as needed
+            duration=20  # Adjust duration as needed
         )
         
         if not instrument_path:
@@ -166,7 +166,7 @@ def process_audio(input_mp3_path, instrument="guitar"):
         # Store the generated chunk path
         generated_chunks.append(instrument_path)
         
-        # Generate comparison plots between vocals and instrument
+        # Validation using the comparison plot
         plots_dir = os.path.join(os.path.dirname(wav_output), "plots")
         os.makedirs(plots_dir, exist_ok=True)
         comparison_plot = create_audio_comparison_plots(

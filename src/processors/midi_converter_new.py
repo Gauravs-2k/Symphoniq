@@ -2,6 +2,7 @@ import os
 import librosa
 import numpy as np
 from mido import Message, MidiFile, MidiTrack
+import argparse
 
 def vocal_to_midi(input_file, output_file, min_note='C2', max_note='C7'):
     try:
@@ -64,6 +65,11 @@ def vocal_to_midi(input_file, output_file, min_note='C2', max_note='C7'):
         return False
 
 if __name__ == "__main__":
-    input_file = os.path.join(os.getcwd(), "separated", "eterna-cancao-wav-12569_vocals.wav")
-    output_file = os.path.join(os.getcwd(), "midi", "vocal_melody.mid")
-    vocal_to_midi(input_file, output_file)
+    parser = argparse.ArgumentParser(description='Convert vocal audio to MIDI')
+    parser.add_argument('input_file', help='Path to input vocal audio file')
+    parser.add_argument('--output', '-o', help='Path to output MIDI file (default: ./midi/vocal_melody.mid)',
+                       default=os.path.join(os.getcwd(), "midi", "vocal_melody.mid"))
+    
+    args = parser.parse_args()
+    
+    vocal_to_midi(args.input_file, args.output)
